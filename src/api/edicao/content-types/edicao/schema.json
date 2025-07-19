@@ -1,0 +1,92 @@
+{
+  "kind": "collectionType",
+  "collectionName": "edicoes",
+  "info": {
+    "singularName": "edicao",
+    "pluralName": "edicoes",
+    "displayName": "Edicao"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {
+    "i18n": {
+      "localized": true
+    }
+  },
+  "attributes": {
+    "volume": {
+      "type": "integer",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      },
+      "required": true
+    },
+    "numero": {
+      "type": "integer",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "periodo": {
+      "type": "string",
+      "pluginOptions": {
+        "i18n": {
+          "localized": true
+        }
+      }
+    },
+    "data_de_publicacao": {
+      "type": "date",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "apresentacao": {
+      "type": "media",
+      "pluginOptions": {
+        "i18n": {
+          "localized": true
+        }
+      },
+      "multiple": false,
+      "allowedTypes": [
+        "files"
+      ]
+    },
+    "capa": {
+      "type": "media",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      },
+      "multiple": false,
+      "allowedTypes": [
+        "images"
+      ]
+    },
+    "artigos": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::artigo.artigo",
+      "mappedBy": "edicao"
+    },
+    "editorial": {
+      "type": "component",
+      "pluginOptions": {
+        "i18n": {
+          "localized": true
+        }
+      },
+      "component": "simples.editorial",
+      "repeatable": false
+    }
+  }
+}

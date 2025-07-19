@@ -1,0 +1,103 @@
+{
+  "kind": "collectionType",
+  "collectionName": "autores",
+  "info": {
+    "singularName": "autor",
+    "pluralName": "autores",
+    "displayName": "Autor"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {
+    "i18n": {
+      "localized": true
+    }
+  },
+  "attributes": {
+    "nome": {
+      "type": "string",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      },
+      "required": true
+    },
+    "instituicao": {
+      "type": "string",
+      "pluginOptions": {
+        "i18n": {
+          "localized": true
+        }
+      }
+    },
+    "departamento": {
+      "type": "string",
+      "pluginOptions": {
+        "i18n": {
+          "localized": true
+        }
+      }
+    },
+    "orcid": {
+      "type": "string",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      },
+      "regex": "^https?:\\/\\/[\\w\\-]+(\\.[\\w\\-]+)+[/#?]?.*$"
+    },
+    "email": {
+      "type": "email",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "biografia": {
+      "type": "blocks",
+      "pluginOptions": {
+        "i18n": {
+          "localized": true
+        }
+      }
+    },
+    "foto": {
+      "type": "media",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      },
+      "multiple": false,
+      "allowedTypes": [
+        "images"
+      ]
+    },
+    "interesses": {
+      "type": "component",
+      "pluginOptions": {
+        "i18n": {
+          "localized": true
+        }
+      },
+      "component": "simples.texto",
+      "repeatable": true
+    },
+    "artigos": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::artigo.artigo",
+      "inversedBy": "autores"
+    },
+    "artigos_traduzidos": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::artigo.artigo",
+      "inversedBy": "tradutores"
+    }
+  }
+}
