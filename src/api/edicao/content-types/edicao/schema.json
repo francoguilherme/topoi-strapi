@@ -4,7 +4,7 @@
   "info": {
     "singularName": "edicao",
     "pluralName": "edicoes",
-    "displayName": "Edicao"
+    "displayName": "Edição"
   },
   "options": {
     "draftAndPublish": true
@@ -19,7 +19,7 @@
       "type": "integer",
       "pluginOptions": {
         "i18n": {
-          "localized": false
+          "localized": true
         }
       },
       "required": true
@@ -28,7 +28,7 @@
       "type": "integer",
       "pluginOptions": {
         "i18n": {
-          "localized": false
+          "localized": true
         }
       }
     },
@@ -38,13 +38,14 @@
         "i18n": {
           "localized": true
         }
-      }
+      },
+      "required": false
     },
     "data_de_publicacao": {
       "type": "date",
       "pluginOptions": {
         "i18n": {
-          "localized": false
+          "localized": true
         }
       }
     },
@@ -64,7 +65,7 @@
       "type": "media",
       "pluginOptions": {
         "i18n": {
-          "localized": false
+          "localized": true
         }
       },
       "multiple": false,
@@ -87,6 +88,16 @@
       },
       "component": "simples.editorial",
       "repeatable": false
+    },
+    "titulo_composto": {
+      "type": "string",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      },
+      "required": false,
+      "unique": true
     }
   }
 }

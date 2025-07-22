@@ -657,7 +657,7 @@ export interface ApiDossieDossie extends Struct.SingleTypeSchema {
 export interface ApiEdicaoEdicao extends Struct.CollectionTypeSchema {
   collectionName: 'edicoes';
   info: {
-    displayName: 'Edicao';
+    displayName: 'Edi\u00E7\u00E3o';
     pluralName: 'edicoes';
     singularName: 'edicao';
   };
@@ -680,7 +680,7 @@ export interface ApiEdicaoEdicao extends Struct.CollectionTypeSchema {
     capa: Schema.Attribute.Media<'images'> &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
-          localized: false;
+          localized: true;
         };
       }>;
     createdAt: Schema.Attribute.DateTime;
@@ -689,7 +689,7 @@ export interface ApiEdicaoEdicao extends Struct.CollectionTypeSchema {
     data_de_publicacao: Schema.Attribute.Date &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
-          localized: false;
+          localized: true;
         };
       }>;
     editorial: Schema.Attribute.Component<'simples.editorial', false> &
@@ -703,7 +703,7 @@ export interface ApiEdicaoEdicao extends Struct.CollectionTypeSchema {
     numero: Schema.Attribute.Integer &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
-          localized: false;
+          localized: true;
         };
       }>;
     periodo: Schema.Attribute.String &
@@ -713,6 +713,13 @@ export interface ApiEdicaoEdicao extends Struct.CollectionTypeSchema {
         };
       }>;
     publishedAt: Schema.Attribute.DateTime;
+    titulo_composto: Schema.Attribute.String &
+      Schema.Attribute.Unique &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -720,7 +727,7 @@ export interface ApiEdicaoEdicao extends Struct.CollectionTypeSchema {
       Schema.Attribute.Required &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
-          localized: false;
+          localized: true;
         };
       }>;
   };
