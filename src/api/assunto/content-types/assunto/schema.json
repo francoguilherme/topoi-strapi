@@ -33,7 +33,7 @@
         }
       },
       "targetField": "nome",
-      "required": true
+      "required": false
     },
     "descricao": {
       "type": "blocks",

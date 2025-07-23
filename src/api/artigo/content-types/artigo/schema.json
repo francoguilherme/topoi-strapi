@@ -33,7 +33,7 @@
         }
       },
       "targetField": "titulo",
-      "required": true
+      "required": false
     },
     "resumo": {
       "type": "blocks",
