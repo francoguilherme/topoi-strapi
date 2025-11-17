@@ -20,6 +20,8 @@ export interface SimplesPagina extends Struct.ComponentSchema {
     icon: 'layout';
   };
   attributes: {
+    conteudo: Schema.Attribute.Blocks;
+    edicao: Schema.Attribute.Relation<'oneToOne', 'api::edicao.edicao'>;
     mostrar_titulo: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<true>;
     slug: Schema.Attribute.String & Schema.Attribute.Required;
     titulo: Schema.Attribute.String & Schema.Attribute.Required;

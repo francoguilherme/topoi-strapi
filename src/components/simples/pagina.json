@@ -20,6 +20,14 @@
     "slug": {
       "type": "string",
       "required": true
+    },
+    "conteudo": {
+      "type": "blocks"
+    },
+    "edicao": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::edicao.edicao"
     }
   },
   "config": {}
