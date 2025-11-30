@@ -7,7 +7,7 @@ export interface SimplesEditorial extends Struct.ComponentSchema {
     icon: 'pencil';
   };
   attributes: {
-    arquivo: Schema.Attribute.Media<'files', true>;
+    arquivo: Schema.Attribute.Media<'files'>;
     texto: Schema.Attribute.Blocks;
     titulo: Schema.Attribute.String & Schema.Attribute.Required;
   };
