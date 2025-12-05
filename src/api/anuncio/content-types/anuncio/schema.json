@@ -1,10 +1,10 @@
 {
   "kind": "singleType",
-  "collectionName": "dossies",
+  "collectionName": "anuncios",
   "info": {
-    "singularName": "dossie",
-    "pluralName": "dossies",
-    "displayName": "Dossiê"
+    "singularName": "anuncio",
+    "pluralName": "anuncios",
+    "displayName": "Anúncios"
   },
   "options": {
     "draftAndPublish": true

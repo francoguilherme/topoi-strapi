@@ -1,10 +1,10 @@
 {
   "kind": "singleType",
-  "collectionName": "dossies",
+  "collectionName": "eticas",
   "info": {
-    "singularName": "dossie",
-    "pluralName": "dossies",
-    "displayName": "Dossiê"
+    "singularName": "etica",
+    "pluralName": "eticas",
+    "displayName": "Ética"
   },
   "options": {
     "draftAndPublish": true

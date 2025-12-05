@@ -1,10 +1,10 @@
 {
   "kind": "singleType",
-  "collectionName": "dossies",
+  "collectionName": "instrucoes_aos_autores",
   "info": {
-    "singularName": "dossie",
-    "pluralName": "dossies",
-    "displayName": "Dossiê"
+    "singularName": "instrucoes",
+    "pluralName": "instrucoes-aos-autores",
+    "displayName": "Instruções aos autores"
   },
   "options": {
     "draftAndPublish": true

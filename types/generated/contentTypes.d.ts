@@ -430,6 +430,43 @@ export interface AdminUser extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiAnuncioAnuncio extends Struct.SingleTypeSchema {
+  collectionName: 'anuncios';
+  info: {
+    displayName: 'An\u00FAncios';
+    pluralName: 'anuncios';
+    singularName: 'anuncio';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  pluginOptions: {
+    i18n: {
+      localized: true;
+    };
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::anuncio.anuncio'
+    >;
+    pagina: Schema.Attribute.Component<'simples.pagina', false> &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiArtigoArtigo extends Struct.CollectionTypeSchema {
   collectionName: 'artigos';
   info: {
@@ -631,10 +668,85 @@ export interface ApiAutorAutor extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiContatoContato extends Struct.SingleTypeSchema {
+  collectionName: 'contatos';
+  info: {
+    displayName: 'Contatos';
+    pluralName: 'contatos';
+    singularName: 'contato';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  pluginOptions: {
+    i18n: {
+      localized: true;
+    };
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::contato.contato'
+    >;
+    pagina: Schema.Attribute.Component<'simples.pagina', false> &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
+export interface ApiCorpoEditorialCorpoEditorial
+  extends Struct.SingleTypeSchema {
+  collectionName: 'corpo_editorials';
+  info: {
+    displayName: 'Corpo Editorial';
+    pluralName: 'corpo-editorials';
+    singularName: 'corpo-editorial';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  pluginOptions: {
+    i18n: {
+      localized: true;
+    };
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::corpo-editorial.corpo-editorial'
+    >;
+    pagina: Schema.Attribute.Component<'simples.pagina', false> &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiDossieDossie extends Struct.SingleTypeSchema {
   collectionName: 'dossies';
   info: {
-    displayName: 'Dossie';
+    displayName: 'Dossi\u00EA';
     pluralName: 'dossies';
     singularName: 'dossie';
   };
@@ -757,6 +869,40 @@ export interface ApiEdicaoEdicao extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiEticaEtica extends Struct.SingleTypeSchema {
+  collectionName: 'eticas';
+  info: {
+    displayName: '\u00C9tica';
+    pluralName: 'eticas';
+    singularName: 'etica';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  pluginOptions: {
+    i18n: {
+      localized: true;
+    };
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String;
+    localizations: Schema.Attribute.Relation<'oneToMany', 'api::etica.etica'>;
+    pagina: Schema.Attribute.Component<'simples.pagina', false> &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiHomeHome extends Struct.SingleTypeSchema {
   collectionName: 'homes';
   info: {
@@ -778,6 +924,77 @@ export interface ApiHomeHome extends Struct.SingleTypeSchema {
       Schema.Attribute.Private;
     locale: Schema.Attribute.String;
     localizations: Schema.Attribute.Relation<'oneToMany', 'api::home.home'>;
+    pagina: Schema.Attribute.Component<'simples.pagina', false> &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
+export interface ApiInstrucoesInstrucoes extends Struct.SingleTypeSchema {
+  collectionName: 'instrucoes_aos_autores';
+  info: {
+    displayName: 'Instru\u00E7\u00F5es aos autores';
+    pluralName: 'instrucoes-aos-autores';
+    singularName: 'instrucoes';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  pluginOptions: {
+    i18n: {
+      localized: true;
+    };
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::instrucoes.instrucoes'
+    >;
+    pagina: Schema.Attribute.Component<'simples.pagina', false> &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
+export interface ApiSobreSobre extends Struct.SingleTypeSchema {
+  collectionName: 'sobres';
+  info: {
+    displayName: 'Sobre';
+    pluralName: 'sobres';
+    singularName: 'sobre';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  pluginOptions: {
+    i18n: {
+      localized: true;
+    };
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String;
+    localizations: Schema.Attribute.Relation<'oneToMany', 'api::sobre.sobre'>;
     pagina: Schema.Attribute.Component<'simples.pagina', false> &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
@@ -1301,12 +1518,18 @@ declare module '@strapi/strapi' {
       'admin::transfer-token': AdminTransferToken;
       'admin::transfer-token-permission': AdminTransferTokenPermission;
       'admin::user': AdminUser;
+      'api::anuncio.anuncio': ApiAnuncioAnuncio;
       'api::artigo.artigo': ApiArtigoArtigo;
       'api::assunto.assunto': ApiAssuntoAssunto;
       'api::autor.autor': ApiAutorAutor;
+      'api::contato.contato': ApiContatoContato;
+      'api::corpo-editorial.corpo-editorial': ApiCorpoEditorialCorpoEditorial;
       'api::dossie.dossie': ApiDossieDossie;
       'api::edicao.edicao': ApiEdicaoEdicao;
+      'api::etica.etica': ApiEticaEtica;
       'api::home.home': ApiHomeHome;
+      'api::instrucoes.instrucoes': ApiInstrucoesInstrucoes;
+      'api::sobre.sobre': ApiSobreSobre;
       'plugin::content-releases.release': PluginContentReleasesRelease;
       'plugin::content-releases.release-action': PluginContentReleasesReleaseAction;
       'plugin::i18n.locale': PluginI18NLocale;

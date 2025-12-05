@@ -1,10 +1,10 @@
 {
   "kind": "singleType",
-  "collectionName": "dossies",
+  "collectionName": "contatos",
   "info": {
-    "singularName": "dossie",
-    "pluralName": "dossies",
-    "displayName": "Dossiê"
+    "singularName": "contato",
+    "pluralName": "contatos",
+    "displayName": "Contatos"
   },
   "options": {
     "draftAndPublish": true
