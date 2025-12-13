@@ -475,7 +475,7 @@ export interface ApiArtigoArtigo extends Struct.CollectionTypeSchema {
     singularName: 'artigo';
   };
   options: {
-    draftAndPublish: true;
+    draftAndPublish: false;
   };
   pluginOptions: {
     i18n: {
@@ -565,7 +565,6 @@ export interface ApiArtigoArtigo extends Struct.CollectionTypeSchema {
       }>;
     titulo: Schema.Attribute.String &
       Schema.Attribute.Required &
-      Schema.Attribute.Unique &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
           localized: true;

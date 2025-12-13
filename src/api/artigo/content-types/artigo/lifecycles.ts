@@ -3,16 +3,18 @@ const slugify = require('slugify');
 export default {
     async beforeCreate(event) {
         const { data } = event.params;
-
-        if (data.titulo && data.autores) {
+    
+        let nomes = "";
+        if (data.autores) {
             const autorIds = data.autores.connect?.map(a => a.id) || [];
-
             const autores = await strapi.entityService.findMany('api::autor.autor', {
                 filters: { id: { $in: autorIds } },
                 fields: ['nome'],
             });
+            nomes = autores.map(a => a.nome).filter(Boolean).join(' ');
+        }
 
-            const nomes = autores.map(a => a.nome).join(' ');
+        if (data.titulo) {
             const base = `${data.titulo} ${nomes}`;
             data.slug = slugify(base, { replacement: '_', strict: true });
         }
@@ -29,15 +31,32 @@ export default {
             const artigoAtual = await strapi.entityService.findOne('api::artigo.artigo', artigoId, {
                 populate: ['autores'],
                 fields: ['titulo'],
-            }) as {
-                titulo?: string;
-                autores?: { nome: string }[];
-            };
+            }) as any;
+
+            // Get the current list of author IDs
+            let finalAutoresIds = artigoAtual.autores?.map(a => a.id) || [];
+
+            // --- 3. Apply the 'connect' and 'disconnect' instructions (if authors are changing) ---
+            if (data.autores) {
+                const { connect = [], disconnect = [] } = data.autores;
+
+                // a. Add new authors (Connect instructions)
+                const connectIds = connect.map(c => c.id);
+                // Combine and remove duplicates (using Set)
+                finalAutoresIds = [...new Set([...finalAutoresIds, ...connectIds])]; 
+
+                // b. Remove authors (Disconnect instructions)
+                const disconnectIds = disconnect.map(d => d.id);
+                finalAutoresIds = finalAutoresIds.filter(id => !disconnectIds.includes(id));
+            }
 
             const titulo = data.titulo ?? artigoAtual.titulo;
-            const autores = artigoAtual?.autores || [];
+            const autores = await strapi.entityService.findMany('api::autor.autor', {
+                filters: { id: { $in: finalAutoresIds } },
+                fields: ['nome'],
+            });
 
-            const nomes = autores.map(a => a.nome).join(' ');
+            const nomes = autores.map(a => a.nome).filter(Boolean).join(' ');
             const base = `${titulo} ${nomes}`;
             data.slug = slugify(base, { replacement: '_', strict: true});
         }

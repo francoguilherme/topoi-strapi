@@ -7,7 +7,7 @@
     "displayName": "Artigo"
   },
   "options": {
-    "draftAndPublish": true
+    "draftAndPublish": false
   },
   "pluginOptions": {
     "i18n": {
@@ -22,8 +22,7 @@
           "localized": true
         }
       },
-      "required": true,
-      "unique": true
+      "required": true
     },
     "slug": {
       "type": "uid",
