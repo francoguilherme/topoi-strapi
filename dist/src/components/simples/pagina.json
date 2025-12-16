@@ -1,0 +1,34 @@
+{
+    "collectionName": "components_simples_paginas",
+    "info": {
+        "displayName": "pagina",
+        "icon": "layout"
+    },
+    "options": {},
+    "attributes": {
+        "titulo": {
+            "type": "string",
+            "required": true
+        },
+        "mostrar_titulo": {
+            "type": "boolean",
+            "default": true
+        },
+        "titulo_curto": {
+            "type": "string"
+        },
+        "slug": {
+            "type": "string",
+            "required": true
+        },
+        "conteudo": {
+            "type": "blocks"
+        },
+        "edicao": {
+            "type": "relation",
+            "relation": "oneToOne",
+            "target": "api::edicao.edicao"
+        }
+    },
+    "config": {}
+}

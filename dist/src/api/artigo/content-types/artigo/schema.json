@@ -1,0 +1,168 @@
+{
+    "kind": "collectionType",
+    "collectionName": "artigos",
+    "info": {
+        "singularName": "artigo",
+        "pluralName": "artigos",
+        "displayName": "Artigo"
+    },
+    "options": {
+        "draftAndPublish": false
+    },
+    "pluginOptions": {
+        "i18n": {
+            "localized": true
+        }
+    },
+    "attributes": {
+        "titulo": {
+            "type": "string",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            },
+            "required": true
+        },
+        "slug": {
+            "type": "uid",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            },
+            "targetField": "titulo",
+            "required": false
+        },
+        "resumo": {
+            "type": "blocks",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
+        },
+        "arquivo": {
+            "type": "media",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            },
+            "multiple": false,
+            "required": true,
+            "allowedTypes": [
+                "files"
+            ]
+        },
+        "palavras_chave": {
+            "type": "component",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            },
+            "component": "simples.texto",
+            "repeatable": true
+        },
+        "assuntos": {
+            "type": "relation",
+            "relation": "manyToMany",
+            "target": "api::assunto.assunto",
+            "mappedBy": "artigos"
+        },
+        "autores": {
+            "type": "relation",
+            "relation": "manyToMany",
+            "target": "api::autor.autor",
+            "mappedBy": "artigos"
+        },
+        "tradutores": {
+            "type": "relation",
+            "relation": "manyToMany",
+            "target": "api::autor.autor",
+            "conditions": {
+                "visible": {
+                    "==": [
+                        {
+                            "var": "secao"
+                        },
+                        "Tradução"
+                    ]
+                }
+            },
+            "mappedBy": "artigos_traduzidos"
+        },
+        "pagina_inicial": {
+            "type": "integer",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": false
+                }
+            }
+        },
+        "pagina_final": {
+            "type": "integer",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": false
+                }
+            }
+        },
+        "secao": {
+            "type": "enumeration",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            },
+            "required": true,
+            "default": "Artigo",
+            "enum": [
+                "Artigo",
+                "Resenha",
+                "Documento",
+                "Entrevista",
+                "Tradução"
+            ]
+        },
+        "edicao": {
+            "type": "relation",
+            "relation": "manyToOne",
+            "target": "api::edicao.edicao",
+            "inversedBy": "artigos"
+        },
+        "grupamento": {
+            "type": "string",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
+        },
+        "doi": {
+            "type": "string",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": false
+                }
+            }
+        },
+        "data_de_publicacao": {
+            "type": "date",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": false
+                }
+            }
+        },
+        "nota": {
+            "type": "string",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,25 @@
+{
+    "collectionName": "components_simples_editorials",
+    "info": {
+        "displayName": "editorial",
+        "icon": "pencil"
+    },
+    "options": {},
+    "attributes": {
+        "titulo": {
+            "type": "string",
+            "required": true
+        },
+        "texto": {
+            "type": "blocks"
+        },
+        "arquivo": {
+            "type": "media",
+            "multiple": false,
+            "allowedTypes": [
+                "files"
+            ]
+        }
+    },
+    "config": {}
+}
