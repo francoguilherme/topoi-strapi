@@ -128,7 +128,3 @@ exports
 build
 .strapi-updater.json
 .strapi-cloud.json
-
-dist/
-!dist/
-!dist/build/
