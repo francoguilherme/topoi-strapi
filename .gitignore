@@ -130,5 +130,5 @@ build
 .strapi-cloud.json
 
 dist/
+!dist/
 !dist/build/
-!dist/build/**
