@@ -56,7 +56,8 @@
           "localized": true
         }
       },
-      "required": false
+      "required": false,
+      "regex": "^(\\d{4})$|(^([a-zA-ZçÇ]+)\\s+-\\s+([a-zA-ZçÇ]+)\\s+(\\d{4})$)"
     },
     "data_de_publicacao": {
       "type": "date",
