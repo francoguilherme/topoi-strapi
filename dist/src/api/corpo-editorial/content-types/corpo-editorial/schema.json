@@ -1,0 +1,29 @@
+{
+    "kind": "singleType",
+    "collectionName": "corpo_editorials",
+    "info": {
+        "singularName": "corpo-editorial",
+        "pluralName": "corpo-editorials",
+        "displayName": "Corpo Editorial"
+    },
+    "options": {
+        "draftAndPublish": true
+    },
+    "pluginOptions": {
+        "i18n": {
+            "localized": true
+        }
+    },
+    "attributes": {
+        "pagina": {
+            "type": "component",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            },
+            "component": "simples.pagina",
+            "repeatable": false
+        }
+    }
+}
