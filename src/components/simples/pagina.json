@@ -6,23 +6,9 @@
   },
   "options": {},
   "attributes": {
-    "titulo": {
-      "type": "string",
-      "required": true
-    },
-    "mostrar_titulo": {
-      "type": "boolean",
-      "default": true
-    },
-    "titulo_curto": {
-      "type": "string"
-    },
-    "slug": {
-      "type": "string",
-      "required": true
-    },
     "conteudo": {
-      "type": "blocks"
+      "type": "blocks",
+      "required": true
     },
     "edicao": {
       "type": "relation",
