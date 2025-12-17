@@ -1,0 +1,20 @@
+{
+    "collectionName": "components_simples_paginas",
+    "info": {
+        "displayName": "pagina",
+        "icon": "layout"
+    },
+    "options": {},
+    "attributes": {
+        "conteudo": {
+            "type": "blocks",
+            "required": true
+        },
+        "edicao": {
+            "type": "relation",
+            "relation": "oneToOne",
+            "target": "api::edicao.edicao"
+        }
+    },
+    "config": {}
+}

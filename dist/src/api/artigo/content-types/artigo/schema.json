@@ -1,0 +1,110 @@
+{
+    "kind": "collectionType",
+    "collectionName": "artigos",
+    "info": {
+        "singularName": "artigo",
+        "pluralName": "artigos",
+        "displayName": "Artigo"
+    },
+    "options": {
+        "draftAndPublish": false
+    },
+    "pluginOptions": {},
+    "attributes": {
+        "titulo": {
+            "type": "string",
+            "required": true
+        },
+        "titulo_en": {
+            "type": "string"
+        },
+        "titulo_es": {
+            "type": "string"
+        },
+        "slug": {
+            "type": "uid",
+            "targetField": "titulo",
+            "required": false
+        },
+        "resumo": {
+            "type": "blocks"
+        },
+        "arquivo": {
+            "type": "media",
+            "multiple": false,
+            "required": true,
+            "allowedTypes": [
+                "files"
+            ]
+        },
+        "palavras_chave": {
+            "type": "component",
+            "component": "simples.texto",
+            "repeatable": true
+        },
+        "assuntos": {
+            "type": "relation",
+            "relation": "manyToMany",
+            "target": "api::assunto.assunto",
+            "mappedBy": "artigos"
+        },
+        "autores": {
+            "type": "relation",
+            "relation": "manyToMany",
+            "target": "api::autor.autor",
+            "mappedBy": "artigos"
+        },
+        "tradutores": {
+            "type": "relation",
+            "relation": "manyToMany",
+            "target": "api::autor.autor",
+            "conditions": {
+                "visible": {
+                    "==": [
+                        {
+                            "var": "secao"
+                        },
+                        "Tradução"
+                    ]
+                }
+            },
+            "mappedBy": "artigos_traduzidos"
+        },
+        "pagina_inicial": {
+            "type": "integer"
+        },
+        "pagina_final": {
+            "type": "integer"
+        },
+        "secao": {
+            "type": "enumeration",
+            "required": true,
+            "default": "Artigo",
+            "enum": [
+                "Artigo",
+                "Resenha",
+                "Documento",
+                "Entrevista",
+                "Tradução"
+            ]
+        },
+        "edicao": {
+            "type": "relation",
+            "relation": "manyToOne",
+            "target": "api::edicao.edicao",
+            "inversedBy": "artigos"
+        },
+        "grupamento": {
+            "type": "string"
+        },
+        "doi": {
+            "type": "string"
+        },
+        "data_de_publicacao": {
+            "type": "date"
+        },
+        "nota": {
+            "type": "string"
+        }
+    }
+}

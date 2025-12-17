@@ -1,0 +1,64 @@
+{
+    "kind": "collectionType",
+    "collectionName": "autores",
+    "info": {
+        "singularName": "autor",
+        "pluralName": "autores",
+        "displayName": "Autor"
+    },
+    "options": {
+        "draftAndPublish": true
+    },
+    "pluginOptions": {},
+    "attributes": {
+        "nome": {
+            "type": "string",
+            "required": true
+        },
+        "slug": {
+            "type": "uid",
+            "targetField": "nome",
+            "required": false
+        },
+        "instituicao": {
+            "type": "string"
+        },
+        "departamento": {
+            "type": "string"
+        },
+        "orcid": {
+            "type": "string",
+            "regex": "^https?:\\/\\/[\\w\\-]+(\\.[\\w\\-]+)+[/#?]?.*$"
+        },
+        "email": {
+            "type": "email"
+        },
+        "biografia": {
+            "type": "blocks"
+        },
+        "foto": {
+            "type": "media",
+            "multiple": false,
+            "allowedTypes": [
+                "images"
+            ]
+        },
+        "interesses": {
+            "type": "component",
+            "component": "simples.texto",
+            "repeatable": true
+        },
+        "artigos": {
+            "type": "relation",
+            "relation": "manyToMany",
+            "target": "api::artigo.artigo",
+            "inversedBy": "autores"
+        },
+        "artigos_traduzidos": {
+            "type": "relation",
+            "relation": "manyToMany",
+            "target": "api::artigo.artigo",
+            "inversedBy": "tradutores"
+        }
+    }
+}
