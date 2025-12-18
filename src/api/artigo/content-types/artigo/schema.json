@@ -29,6 +29,12 @@
     "resumo": {
       "type": "blocks"
     },
+    "resumo_en": {
+      "type": "blocks"
+    },
+    "resumo_es": {
+      "type": "blocks"
+    },
     "arquivo": {
       "type": "media",
       "multiple": false,
@@ -42,33 +48,11 @@
       "component": "simples.texto",
       "repeatable": true
     },
-    "assuntos": {
-      "type": "relation",
-      "relation": "manyToMany",
-      "target": "api::assunto.assunto",
-      "mappedBy": "artigos"
-    },
     "autores": {
       "type": "relation",
       "relation": "manyToMany",
       "target": "api::autor.autor",
       "mappedBy": "artigos"
-    },
-    "tradutores": {
-      "type": "relation",
-      "relation": "manyToMany",
-      "target": "api::autor.autor",
-      "conditions": {
-        "visible": {
-          "==": [
-            {
-              "var": "secao"
-            },
-            "Tradução"
-          ]
-        }
-      },
-      "mappedBy": "artigos_traduzidos"
     },
     "pagina_inicial": {
       "type": "integer"
@@ -83,10 +67,13 @@
       "enum": [
         "Artigo",
         "Resenha",
-        "Documento",
         "Entrevista",
-        "Tradução"
+        "Documento"
       ]
+    },
+    "dossie": {
+      "type": "boolean",
+      "required": true
     },
     "edicao": {
       "type": "relation",
@@ -94,16 +81,33 @@
       "target": "api::edicao.edicao",
       "inversedBy": "artigos"
     },
-    "grupamento": {
-      "type": "string"
+    "traducao": {
+      "type": "boolean",
+      "default": false
     },
-    "doi": {
+    "tradutores": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::autor.autor",
+      "conditions": {
+        "visible": {
+          "==": [
+            {
+              "var": "traducao"
+            },
+            true
+          ]
+        }
+      },
+      "mappedBy": "artigos_traduzidos"
+    },
+    "anotacao": {
       "type": "string"
     },
     "data_de_publicacao": {
       "type": "date"
     },
-    "nota": {
+    "doi": {
       "type": "string"
     }
   }

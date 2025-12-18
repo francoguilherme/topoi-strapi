@@ -478,30 +478,31 @@ export interface ApiArtigoArtigo extends Struct.CollectionTypeSchema {
     draftAndPublish: false;
   };
   attributes: {
+    anotacao: Schema.Attribute.String;
     arquivo: Schema.Attribute.Media<'files'> & Schema.Attribute.Required;
-    assuntos: Schema.Attribute.Relation<'manyToMany', 'api::assunto.assunto'>;
     autores: Schema.Attribute.Relation<'manyToMany', 'api::autor.autor'>;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     data_de_publicacao: Schema.Attribute.Date;
     doi: Schema.Attribute.String;
+    dossie: Schema.Attribute.Boolean & Schema.Attribute.Required;
     edicao: Schema.Attribute.Relation<'manyToOne', 'api::edicao.edicao'>;
-    grupamento: Schema.Attribute.String;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
       'api::artigo.artigo'
     > &
       Schema.Attribute.Private;
-    nota: Schema.Attribute.String;
     pagina_final: Schema.Attribute.Integer;
     pagina_inicial: Schema.Attribute.Integer;
     palavras_chave: Schema.Attribute.Component<'simples.texto', true>;
     publishedAt: Schema.Attribute.DateTime;
     resumo: Schema.Attribute.Blocks;
+    resumo_en: Schema.Attribute.Blocks;
+    resumo_es: Schema.Attribute.Blocks;
     secao: Schema.Attribute.Enumeration<
-      ['Artigo', 'Resenha', 'Documento', 'Entrevista', 'Tradu\u00E7\u00E3o']
+      ['Artigo', 'Resenha', 'Entrevista', 'Documento']
     > &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'Artigo'>;
@@ -509,6 +510,7 @@ export interface ApiArtigoArtigo extends Struct.CollectionTypeSchema {
     titulo: Schema.Attribute.String & Schema.Attribute.Required;
     titulo_en: Schema.Attribute.String;
     titulo_es: Schema.Attribute.String;
+    traducao: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     tradutores: Schema.Attribute.Relation<'manyToMany', 'api::autor.autor'>;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
@@ -532,7 +534,6 @@ export interface ApiAssuntoAssunto extends Struct.CollectionTypeSchema {
     };
   };
   attributes: {
-    artigos: Schema.Attribute.Relation<'manyToMany', 'api::artigo.artigo'>;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;

@@ -42,12 +42,6 @@
                     "localized": true
                 }
             }
-        },
-        "artigos": {
-            "type": "relation",
-            "relation": "manyToMany",
-            "target": "api::artigo.artigo",
-            "inversedBy": "assuntos"
         }
     }
 }
