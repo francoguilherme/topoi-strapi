@@ -16,7 +16,7 @@ export default {
 
         if (data.titulo) {
             const base = `${data.titulo} ${nomes}`;
-            data.slug = slugify(base, { replacement: '_', strict: true });
+            data.slug = slugify(base, { replacement: '_', strict: true }).slice(0, 250);
         }
     },
 
@@ -58,7 +58,7 @@ export default {
 
             const nomes = autores.map(a => a.nome).filter(Boolean).join(' ');
             const base = `${titulo} ${nomes}`;
-            data.slug = slugify(base, { replacement: '_', strict: true});
+            data.slug = slugify(base, { replacement: '_', strict: true}).slice(0, 250);
         }
     },
 };
