@@ -19,10 +19,11 @@ import {
   Flex,
   Typography,
 } from '@strapi/design-system';
-import { Download, Eye, Upload } from '@strapi/icons';
+import { Code, Download, Eye, Upload } from '@strapi/icons';
 
 import { ARTIGO_MODEL_UID, getArtigoEditPath } from './constants';
 import { buildFileUrl, formatBytes, isXmlFile, type ArtigoXmlFile } from './utils';
+import { ArticleRenderer } from './jats/ArticleRenderer';
 
 interface ArtigoData {
   id: number;
@@ -44,6 +45,7 @@ export const ArtigoXmlPage = () => {
   const [isUploading, setIsUploading] = React.useState(false);
   const [isContentLoading, setIsContentLoading] = React.useState(false);
   const [xmlContent, setXmlContent] = React.useState<string | null>(null);
+  const [viewMode, setViewMode] = React.useState<'rendered' | 'raw'>('rendered');
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const fetchArtigo = React.useCallback(async () => {
@@ -149,6 +151,7 @@ export const ArtigoXmlPage = () => {
     try {
       const response = await fetch(buildFileUrl(artigo.xml.url));
       const text = await response.text();
+      setViewMode('rendered');
       setXmlContent(text);
     } catch {
       toggleNotification({
@@ -159,6 +162,14 @@ export const ArtigoXmlPage = () => {
       setIsContentLoading(false);
     }
   };
+
+  const handleParseError = React.useCallback(() => {
+    setViewMode('raw');
+    toggleNotification({
+      type: 'warning',
+      message: 'Não foi possível interpretar o XML como um artigo; exibindo o conteúdo bruto.',
+    });
+  }, [toggleNotification]);
 
   if (isLoading) {
     return <Page.Loading />;
@@ -205,13 +216,22 @@ export const ArtigoXmlPage = () => {
                     </Typography>
                   </Flex>
                   <Flex gap={2}>
+                    {xmlContent !== null && (
+                      <Button
+                        variant="tertiary"
+                        startIcon={viewMode === 'rendered' ? <Code /> : <Eye />}
+                        onClick={() => setViewMode(viewMode === 'rendered' ? 'raw' : 'rendered')}
+                      >
+                        {viewMode === 'rendered' ? 'Ver XML bruto' : 'Ver artigo renderizado'}
+                      </Button>
+                    )}
                     <Button
                       variant="tertiary"
                       startIcon={<Eye />}
                       loading={isContentLoading}
                       onClick={handleViewContent}
                     >
-                      Visualizar conteúdo
+                      Visualizar artigo
                     </Button>
                     <Button
                       variant="secondary"
@@ -231,13 +251,17 @@ export const ArtigoXmlPage = () => {
                     background="neutral0"
                     hasRadius
                     borderColor="neutral200"
-                    padding={4}
-                    maxHeight="400px"
+                    padding={6}
+                    maxHeight="70vh"
                     overflow="auto"
                   >
-                    <Typography tag="pre" variant="pi" style={{ whiteSpace: 'pre-wrap' }}>
-                      {xmlContent}
-                    </Typography>
+                    {viewMode === 'rendered' ? (
+                      <ArticleRenderer xml={xmlContent} onParseError={handleParseError} />
+                    ) : (
+                      <Typography tag="pre" variant="pi" style={{ whiteSpace: 'pre-wrap' }}>
+                        {xmlContent}
+                      </Typography>
+                    )}
                   </Box>
                 )}
               </Flex>
