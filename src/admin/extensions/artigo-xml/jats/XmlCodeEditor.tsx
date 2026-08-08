@@ -22,7 +22,6 @@ export const XmlCodeEditor: React.FC<XmlCodeEditorProps> = ({ value, onChange, r
     onChange={onChange}
     extensions={extensions}
     readOnly={readOnly}
-    height="70vh"
     basicSetup={{
       lineNumbers: true,
       foldGutter: true,

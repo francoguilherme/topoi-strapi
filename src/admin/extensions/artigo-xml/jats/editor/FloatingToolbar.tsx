@@ -5,11 +5,23 @@
  * next to the selection instead of pinned above the field.
  */
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import { Editor, Range } from 'slate';
 import { ReactEditor, useSlate } from 'slate-react';
 import styled from 'styled-components';
 
+import { ARTIGO_XML_VIEWPORT_SELECTOR } from '../../constants';
 import { insertLink, insertXref, isMarkActive, MarkKey, toggleMark } from './inlineModel';
+
+const getViewportContainer = (editor: Editor): HTMLElement | null => {
+  try {
+    const anchor = ReactEditor.toDOMNode(editor, editor);
+    const container = anchor.closest(ARTIGO_XML_VIEWPORT_SELECTOR);
+    return container instanceof HTMLElement ? container : null;
+  } catch {
+    return null;
+  }
+};
 
 interface FloatingToolbarProps {
   xrefTargets: Array<{ id: string; label: string }>;
@@ -31,25 +43,68 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ xrefTargets })
     if (!el) {
       return;
     }
-    if (!isVisible || !selection) {
-      el.style.display = 'none';
+
+    const updatePosition = () => {
+      if (!isVisible || !selection) {
+        el.style.display = 'none';
+        return;
+      }
+      try {
+        const container = getViewportContainer(editor);
+        if (!container) {
+          el.style.display = 'none';
+          return;
+        }
+
+        const containerRect = container.getBoundingClientRect();
+        const domRange = ReactEditor.toDOMRange(editor, selection);
+        const rect = domRange.getBoundingClientRect();
+
+        const selectionInView =
+          rect.bottom > containerRect.top && rect.top < containerRect.bottom;
+
+        if (!selectionInView) {
+          el.style.display = 'none';
+          return;
+        }
+
+        el.style.display = 'flex';
+
+        const padding = 8;
+        const top = rect.top - containerRect.top + container.scrollTop - el.offsetHeight - padding;
+        let left =
+          rect.left - containerRect.left + container.scrollLeft + rect.width / 2 - el.offsetWidth / 2;
+
+        left = Math.max(
+          container.scrollLeft + padding,
+          Math.min(left, container.scrollLeft + container.clientWidth - el.offsetWidth - padding)
+        );
+
+        el.style.top = `${top}px`;
+        el.style.left = `${left}px`;
+      } catch {
+        el.style.display = 'none';
+      }
+    };
+
+    updatePosition();
+
+    if (!isVisible) {
       return;
     }
-    try {
-      const domRange = ReactEditor.toDOMRange(editor, selection);
-      const rect = domRange.getBoundingClientRect();
-      el.style.display = 'flex';
-      const top = rect.top - el.offsetHeight - 8;
-      const left = rect.left + rect.width / 2 - el.offsetWidth / 2;
-      el.style.top = `${Math.max(8, top)}px`;
-      el.style.left = `${Math.max(8, left)}px`;
-    } catch {
-      el.style.display = 'none';
-    }
+
+    window.addEventListener('scroll', updatePosition, true);
+    window.addEventListener('resize', updatePosition);
+    return () => {
+      window.removeEventListener('scroll', updatePosition, true);
+      window.removeEventListener('resize', updatePosition);
+    };
   });
 
-  return (
-    <Popover ref={ref}>
+  const portalTarget = getViewportContainer(editor);
+
+  const toolbar = (
+    <Popover ref={ref} data-floating-toolbar aria-hidden={!isVisible}>
       <MarkButton editor={editor} mark="bold" label={<strong>B</strong>} title="Negrito" />
       <MarkButton editor={editor} mark="italic" label={<em>I</em>} title="Itálico" />
       <MarkButton editor={editor} mark="underline" label={<u>S</u>} title="Sublinhado" />
@@ -82,7 +137,7 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ xrefTargets })
             }
           }}
         >
-          <option value="" disabled>
+          <option value="" hidden>
             + Ref. cruzada
           </option>
           {xrefTargets.map((target) => (
@@ -94,6 +149,8 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ xrefTargets })
       )}
     </Popover>
   );
+
+  return portalTarget ? createPortal(toolbar, portalTarget) : null;
 };
 
 const MarkButton: React.FC<{ editor: Editor; mark: MarkKey; label: React.ReactNode; title: string }> = ({
@@ -116,8 +173,8 @@ const MarkButton: React.FC<{ editor: Editor; mark: MarkKey; label: React.ReactNo
 );
 
 const Popover = styled.div`
-  position: fixed;
-  z-index: 30;
+  position: absolute;
+  z-index: 2;
   display: none;
   align-items: center;
   gap: 2px;

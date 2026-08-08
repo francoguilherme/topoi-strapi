@@ -11,8 +11,11 @@ import { ReactEditor } from 'slate-react';
 import styled from 'styled-components';
 
 import { BLOCK_KIND_LABELS, BlockKind, createEmptyBlock, SectionElement } from './advancedBlocks';
+import { useArtigoXmlViewportScrollLock } from './useArtigoXmlViewportScrollLock';
 
 const SLASH_TRIGGER_TYPES = new Set(['paragraph', 'quote-attrib']);
+
+export { SLASH_TRIGGER_TYPES };
 
 const BLOCK_KIND_ORDER: BlockKind[] = [
   'paragraph',
@@ -75,7 +78,6 @@ export interface SlashMenuController {
   isOpen: boolean;
   items: BlockKind[];
   activeIndex: number;
-  position: { top: number; left: number } | null;
   /** Returns `true` if the key was consumed (caller should not let Slate handle it further). */
   handleKeyDown: (event: React.KeyboardEvent) => boolean;
   selectItem: (kind: BlockKind) => void;
@@ -102,20 +104,6 @@ export const useSlashMenu = (editor: Editor): SlashMenuController => {
   React.useEffect(() => {
     setActiveIndex(0);
   }, [targetKey]);
-
-  const position = React.useMemo(() => {
-    if (!target) {
-      return null;
-    }
-    try {
-      const point = { path: target.path, offset: 0 };
-      const domRange = ReactEditor.toDOMRange(editor, { anchor: point, focus: point });
-      const rect = domRange.getBoundingClientRect();
-      return { top: rect.bottom + window.scrollY + 4, left: rect.left + window.scrollX };
-    } catch {
-      return null;
-    }
-  }, [editor, targetKey]);
 
   const selectItem = React.useCallback(
     (kind: BlockKind) => {
@@ -167,28 +155,68 @@ export const useSlashMenu = (editor: Editor): SlashMenuController => {
     [isOpen, items, activeIndex, selectItem, targetKey]
   );
 
-  return { isOpen, items, activeIndex, position, handleKeyDown, selectItem };
+  return { isOpen, items, activeIndex, handleKeyDown, selectItem };
 };
 
-export const SlashMenuList: React.FC<{ controller: SlashMenuController }> = ({ controller }) => {
-  if (!controller.isOpen || !controller.position) {
-    return null;
-  }
+export const SlashMenuList: React.FC<{ controller: SlashMenuController; editor: Editor }> = ({
+  controller,
+  editor,
+}) => {
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  useArtigoXmlViewportScrollLock(controller.isOpen, editor);
+
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) {
+      return;
+    }
+
+    const updatePosition = () => {
+      if (!controller.isOpen || !editor.selection) {
+        el.style.display = 'none';
+        return;
+      }
+      try {
+        const domRange = ReactEditor.toDOMRange(editor, editor.selection);
+        const rect = domRange.getBoundingClientRect();
+        el.style.display = 'block';
+        el.style.top = `${rect.bottom + 4}px`;
+        el.style.left = `${rect.left}px`;
+      } catch {
+        el.style.display = 'none';
+      }
+    };
+
+    updatePosition();
+
+    if (!controller.isOpen) {
+      return;
+    }
+
+    window.addEventListener('scroll', updatePosition, true);
+    window.addEventListener('resize', updatePosition);
+    return () => {
+      window.removeEventListener('scroll', updatePosition, true);
+      window.removeEventListener('resize', updatePosition);
+    };
+  });
 
   return (
-    <MenuPortal style={{ top: controller.position.top, left: controller.position.left }}>
-      {controller.items.map((kind, index) => (
-        <MenuItem
-          key={kind}
-          $active={index === controller.activeIndex}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            controller.selectItem(kind);
-          }}
-        >
-          {BLOCK_KIND_LABELS[kind]}
-        </MenuItem>
-      ))}
+    <MenuPortal ref={ref} data-slash-menu aria-hidden={!controller.isOpen}>
+      {controller.isOpen &&
+        controller.items.map((kind, index) => (
+          <MenuItem
+            key={kind}
+            $active={index === controller.activeIndex}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              controller.selectItem(kind);
+            }}
+          >
+            {BLOCK_KIND_LABELS[kind]}
+          </MenuItem>
+        ))}
     </MenuPortal>
   );
 };
@@ -196,8 +224,9 @@ export const SlashMenuList: React.FC<{ controller: SlashMenuController }> = ({ c
 const MenuPortal = styled.div`
   position: fixed;
   z-index: 20;
+  display: none;
   min-width: 200px;
-  max-height: 260px;
+  max-height: 265px;
   overflow-y: auto;
   background: #fff;
   border: 1px solid #dcdce4;
@@ -209,7 +238,7 @@ const MenuPortal = styled.div`
 const MenuItem = styled.div<{ $active?: boolean }>`
   padding: 6px 10px;
   border-radius: 4px;
-  font-size: 0.85rem;
+  font-size: 1.2rem;
   cursor: pointer;
   background: ${({ $active }) => ($active ? '#f0f0ff' : 'transparent')};
   color: #32324d;

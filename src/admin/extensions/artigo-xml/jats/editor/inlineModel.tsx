@@ -4,9 +4,12 @@
  * `AdvancedEditor`. Kept in one place so both editors always agree on what a "bold" or a
  * "cross-reference" is, and on how they round-trip to/from the JATS DOM.
  */
-import { Editor, Range, Transforms } from 'slate';
-import { RenderElementProps, RenderLeafProps } from 'slate-react';
+import { Editor, Element as SlateElement, Range, Transforms } from 'slate';
+import { RenderElementProps, RenderLeafProps, ReactEditor, useSlate } from 'slate-react';
 import * as React from 'react';
+import styled from 'styled-components';
+
+import { useArtigoXmlNavigation } from '../../ArtigoXmlNavigationContext';
 
 export const XLINK_NS = 'http://www.w3.org/1999/xlink';
 
@@ -268,6 +271,18 @@ export const insertXref = (editor: Editor, rid: string, label: string): void => 
   }
 };
 
+export const removeXref = (editor: Editor, element: XrefElement): void => {
+  try {
+    const path = ReactEditor.findPath(editor, element);
+    Transforms.unwrapNodes(editor, {
+      at: path,
+      match: (node) => SlateElement.isElement(node) && node.type === 'xref',
+    });
+  } catch {
+    // The node may already have been removed by a concurrent update.
+  }
+};
+
 const LinkChip: React.FC<{ href: string; children: React.ReactNode } & Record<string, unknown>> = ({
   href,
   children,
@@ -282,26 +297,53 @@ const LinkChip: React.FC<{ href: string; children: React.ReactNode } & Record<st
   </span>
 );
 
-const XrefChip: React.FC<{ rid: string; children: React.ReactNode } & Record<string, unknown>> = ({
-  rid,
-  children,
-  ...attributes
-}) => (
-  <span
-    {...attributes}
-    title={`Referência cruzada: ${rid}`}
-    style={{ background: '#f0f0ff', borderRadius: 3, padding: '0 3px', color: '#4945ff' }}
-  >
-    {children}
-  </span>
-);
+const XrefElementView: React.FC<RenderElementProps> = ({ attributes, children, element }) => {
+  const editor = useSlate();
+  const navigation = useArtigoXmlNavigation();
+
+  if (element.type !== 'xref') {
+    return null;
+  }
+
+  const handleGoToRid = (event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    navigation?.scrollToRid(element.rid);
+  };
+
+  const handleRemove = (event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    removeXref(editor, element);
+  };
+
+  return (
+    <XrefWrapper {...attributes} title={`Referência cruzada: ${element.rid}`}>
+      {children}
+      <XrefMenu contentEditable={false} suppressContentEditableWarning>
+        <XrefMenuRid
+          type="button"
+          title={`Ir para ${element.rid}`}
+          onMouseDown={handleGoToRid}
+          onClick={handleGoToRid}
+        >
+          {element.rid}
+        </XrefMenuRid>
+        <XrefMenuButton type="button" onMouseDown={handleRemove}>
+          Remover referência
+        </XrefMenuButton>
+      </XrefMenu>
+    </XrefWrapper>
+  );
+};
 
 /**
  * Renders the inline elements shared by every editor (`link`, `xref`, `break`). Returns
  * `null` for anything else so callers can fall through to their own (block-level)
  * `renderElement` switch.
  */
-export const renderInlineElement = ({ attributes, children, element }: RenderElementProps): React.ReactElement | null => {
+export const renderInlineElement = (props: RenderElementProps): React.ReactElement | null => {
+  const { attributes, children, element } = props;
   switch (element.type) {
     case 'link':
       return (
@@ -310,11 +352,7 @@ export const renderInlineElement = ({ attributes, children, element }: RenderEle
         </LinkChip>
       );
     case 'xref':
-      return (
-        <XrefChip {...attributes} rid={element.rid}>
-          {children}
-        </XrefChip>
-      );
+      return <XrefElementView {...props} />;
     case 'break':
       return (
         <span {...attributes}>
@@ -343,3 +381,75 @@ export const renderInlineLeaf = ({ attributes, children, leaf }: RenderLeafProps
 
   return <span {...attributes}>{content}</span>;
 };
+
+const XrefMenu = styled.span`
+  display: none;
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 4px);
+  transform: translateX(-50%);
+  z-index: 5;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: #212134;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(33, 33, 52, 0.25);
+  white-space: nowrap;
+
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    height: 4px;
+  }
+`;
+
+const XrefMenuRid = styled.button`
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.2;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #a5a5ba;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+
+  &:hover {
+    color: #fff;
+    background: #32324d;
+  }
+`;
+
+const XrefMenuButton = styled.button`
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.2;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+
+  &:hover {
+    background: #32324d;
+  }
+`;
+
+const XrefWrapper = styled.span`
+  position: relative;
+  background: #f0f0ff;
+  border-radius: 3px;
+  padding: 0 3px;
+  color: #4945ff;
+
+  &:hover ${XrefMenu} {
+    display: inline-flex;
+  }
+`;

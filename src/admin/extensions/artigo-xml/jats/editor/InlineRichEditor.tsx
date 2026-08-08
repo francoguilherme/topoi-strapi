@@ -75,7 +75,7 @@ const XrefSelect: React.FC<{ targets: Array<{ id: string; label: string }> }> = 
         }
       }}
     >
-      <option value="" disabled>
+      <option value="" hidden>
         + Ref. cruzada
       </option>
       {targets.map((target) => (
@@ -87,7 +87,8 @@ const XrefSelect: React.FC<{ targets: Array<{ id: string; label: string }> }> = 
   );
 };
 
-const renderElement = (props: RenderElementProps) => renderInlineElement(props) ?? <p {...props.attributes}>{props.children}</p>;
+const renderElement = (props: RenderElementProps) =>
+  renderInlineElement(props) ?? <EditorParagraph {...props.attributes}>{props.children}</EditorParagraph>;
 
 interface InlineRichEditorProps {
   /** DOM used to create the serialized output nodes; typically the shared article `Document`. */
@@ -99,6 +100,8 @@ interface InlineRichEditorProps {
   onChange: (nodes: Node[]) => void;
   onBlur?: () => void;
   placeholder?: string;
+  /** Font size for the editable area; defaults to compact form-field sizing. */
+  fontSize?: string;
   /** Enables the cross-reference picker, pointing at the article's footnotes/references. */
   xrefTargets?: Array<{ id: string; label: string }>;
 }
@@ -117,6 +120,7 @@ export const InlineRichEditor: React.FC<InlineRichEditorProps> = ({
   onChange,
   onBlur,
   placeholder,
+  fontSize,
   xrefTargets,
 }) => {
   const editor = React.useMemo(() => withInlines(withHistory(withReact(createEditor()))), []);
@@ -146,6 +150,7 @@ export const InlineRichEditor: React.FC<InlineRichEditorProps> = ({
           {xrefTargets && xrefTargets.length > 0 && <XrefSelect targets={xrefTargets} />}
         </Toolbar>
         <EditableArea
+          $fontSize={fontSize}
           renderElement={renderElement}
           renderLeaf={renderInlineLeaf}
           onBlur={onBlur}
@@ -157,6 +162,7 @@ export const InlineRichEditor: React.FC<InlineRichEditorProps> = ({
 };
 
 const EditorWrapper = styled.div`
+  width: 100%;
   border: 1px solid #dcdce4;
   border-radius: 4px;
   background: #fff;
@@ -200,9 +206,31 @@ const ToolbarSelect = styled.select`
   color: #32324d;
 `;
 
-const EditableArea = styled(Editable)`
-  padding: 8px 10px;
+const EditableArea = styled(Editable)<{ $fontSize?: string }>`
+  padding: ${({ $fontSize }) => ($fontSize ? '10px 12px' : '8px 10px')};
   min-height: 2.5em;
-  font-size: 0.875rem;
+  font-size: ${({ $fontSize }) => $fontSize ?? '0.875rem'};
+  line-height: 1.5;
   outline: none;
+
+  [data-slate-placeholder] {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: max-content;
+    max-width: 100%;
+    white-space: nowrap;
+    opacity: 0.333;
+    pointer-events: none;
+    user-select: none;
+    color: #8e8ea9;
+  }
+`;
+
+const EditorParagraph = styled.p`
+  position: relative;
+  width: 100%;
+  min-height: 1.5em;
+  margin: 0 !important;
+  text-align: left !important;
 `;

@@ -22,8 +22,16 @@ import {
 import { Check, Code, Download, Eye, ListPlus, Sparkle, Upload } from '@strapi/icons';
 
 import { ARTIGO_MODEL_UID, getArtigoEditPath } from './constants';
+import { ArtigoXmlNavigationContext } from './ArtigoXmlNavigationContext';
+import {
+  advancedEditorSectionSelector,
+  ADVANCED_EDITOR_SECTION_NAV_OFFSET,
+  type AdvancedEditorSection,
+} from './jats/editor/advancedEditorSections';
+import { AdvancedEditorSectionNav } from './jats/editor/AdvancedEditorSectionNav';
 import { buildFileUrl, formatBytes, isXmlFile, type ArtigoXmlFile } from './utils';
 import { ArticleRenderer, JatsParseError, parseJatsXml } from './jats/ArticleRenderer';
+import { normalizeJatsXml } from './jats/normalizeJatsXml';
 import { XmlCodeEditor } from './jats/XmlCodeEditor';
 import { StructuredEditor } from './jats/editor/StructuredEditor';
 import { AdvancedEditor } from './jats/editor/AdvancedEditor';
@@ -55,7 +63,77 @@ export const ArtigoXmlPage = () => {
   const [lastSavedXml, setLastSavedXml] = React.useState<string | null>(null);
   const [draftXml, setDraftXml] = React.useState<string | null>(null);
   const [viewMode, setViewMode] = React.useState<'rendered' | 'raw' | 'editor' | 'advanced'>('rendered');
+  const [editorRevision, setEditorRevision] = React.useState(0);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const loadedXmlIdRef = React.useRef<number | null>(null);
+  const viewportRef = React.useRef<HTMLDivElement>(null);
+  const viewportScrollTopRef = React.useRef(0);
+
+  const changeViewMode = React.useCallback((mode: typeof viewMode) => {
+    if (viewportRef.current) {
+      viewportScrollTopRef.current = viewportRef.current.scrollTop;
+    }
+    setViewMode(mode);
+  }, []);
+
+  const scrollToRid = React.useCallback((rid: string) => {
+    const viewport = viewportRef.current;
+    if (!viewport || !rid) {
+      return;
+    }
+
+    const selector = `#${CSS.escape(rid)}`;
+    const target = Array.from(viewport.querySelectorAll(selector)).find(
+      (el) => (el as HTMLElement).getClientRects().length > 0
+    );
+
+    if (!target) {
+      return;
+    }
+
+    const targetEl = target as HTMLElement;
+    const viewportRect = viewport.getBoundingClientRect();
+    const targetRect = targetEl.getBoundingClientRect();
+    const top =
+      viewport.scrollTop +
+      (targetRect.top - viewportRect.top) -
+      viewport.clientHeight / 2 +
+      targetRect.height / 2;
+
+    viewport.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    targetEl.focus({ preventScroll: true });
+  }, []);
+
+  const scrollToSection = React.useCallback((section: AdvancedEditorSection) => {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const target = viewport.querySelector(advancedEditorSectionSelector(section));
+    if (!target || (target as HTMLElement).getClientRects().length === 0) {
+      return;
+    }
+
+    const targetEl = target as HTMLElement;
+    const viewportRect = viewport.getBoundingClientRect();
+    const targetRect = targetEl.getBoundingClientRect();
+    const navOffset = ADVANCED_EDITOR_SECTION_NAV_OFFSET;
+    const top = viewport.scrollTop + (targetRect.top - viewportRect.top) - navOffset;
+
+    viewport.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+  }, []);
+
+  const navigation = React.useMemo(
+    () => ({ scrollToRid, scrollToSection }),
+    [scrollToRid, scrollToSection]
+  );
+
+  React.useLayoutEffect(() => {
+    if (viewportRef.current) {
+      viewportRef.current.scrollTop = viewportScrollTopRef.current;
+    }
+  }, [viewMode]);
 
   const isDirty = draftXml !== null && draftXml !== lastSavedXml;
 
@@ -98,6 +176,45 @@ export const ArtigoXmlPage = () => {
   React.useEffect(() => {
     fetchArtigo();
   }, [fetchArtigo]);
+
+  const loadXmlContent = React.useCallback(
+    async (xmlFile: ArtigoXmlFile) => {
+      setIsContentLoading(true);
+
+      try {
+        const response = await fetch(buildFileUrl(xmlFile.url));
+        const text = await response.text();
+        setViewMode('rendered');
+        setLastSavedXml(text);
+        setDraftXml(text);
+        setSaveError(null);
+      } catch {
+        toggleNotification({
+          type: 'danger',
+          message: 'Não foi possível carregar o conteúdo do XML.',
+        });
+      } finally {
+        setIsContentLoading(false);
+      }
+    },
+    [toggleNotification]
+  );
+
+  React.useEffect(() => {
+    if (!artigo?.xml) {
+      loadedXmlIdRef.current = null;
+      setLastSavedXml(null);
+      setDraftXml(null);
+      return;
+    }
+
+    if (loadedXmlIdRef.current === artigo.xml.id) {
+      return;
+    }
+
+    loadedXmlIdRef.current = artigo.xml.id;
+    loadXmlContent(artigo.xml);
+  }, [artigo?.xml, loadXmlContent]);
 
   /**
    * Uploads `file` and links it as the article's `xml` field, replacing whatever was
@@ -178,7 +295,20 @@ export const ArtigoXmlPage = () => {
     setIsUploading(true);
 
     try {
-      const succeeded = await replaceXmlFile(file);
+      let normalizedFile: File;
+      try {
+        const normalized = normalizeJatsXml(await file.text());
+        normalizedFile = new File([normalized], file.name, { type: file.type || 'application/xml' });
+      } catch {
+        toggleNotification({
+          type: 'danger',
+          message:
+            'Não foi possível normalizar o XML. Verifique se o arquivo é um artigo JATS válido e bem formado.',
+        });
+        return;
+      }
+
+      const succeeded = await replaceXmlFile(normalizedFile);
       if (succeeded) {
         setLastSavedXml(null);
         setDraftXml(null);
@@ -189,42 +319,24 @@ export const ArtigoXmlPage = () => {
     }
   };
 
-  const handleViewContent = async () => {
-    if (!artigo?.xml) {
-      return;
-    }
-
-    setIsContentLoading(true);
-
-    try {
-      const response = await fetch(buildFileUrl(artigo.xml.url));
-      const text = await response.text();
-      setViewMode('rendered');
-      setLastSavedXml(text);
-      setDraftXml(text);
-      setSaveError(null);
-    } catch {
-      toggleNotification({
-        type: 'danger',
-        message: 'Não foi possível carregar o conteúdo do XML.',
-      });
-    } finally {
-      setIsContentLoading(false);
-    }
-  };
-
   const handleParseError = React.useCallback(() => {
-    setViewMode('raw');
+    changeViewMode('raw');
     toggleNotification({
       type: 'warning',
       message: 'Não foi possível interpretar o XML como um artigo; exibindo o conteúdo bruto.',
     });
-  }, [toggleNotification]);
+  }, [changeViewMode, toggleNotification]);
 
   const handleDraftChange = React.useCallback((value: string) => {
     setDraftXml(value);
     setSaveError(null);
   }, []);
+
+  const handleDiscardDraft = React.useCallback(() => {
+    setDraftXml(lastSavedXml);
+    setSaveError(null);
+    setEditorRevision((revision) => revision + 1);
+  }, [lastSavedXml]);
 
   const handleSaveDraft = React.useCallback(async () => {
     if (draftXml === null || !artigo?.xml) {
@@ -282,6 +394,10 @@ export const ArtigoXmlPage = () => {
     return <Page.Error />;
   }
 
+  if (artigo.xml && isContentLoading && draftXml === null) {
+    return <Page.Loading />;
+  }
+
   const backPath = documentId ? getArtigoEditPath(documentId) : '/content-manager';
 
   return (
@@ -293,7 +409,8 @@ export const ArtigoXmlPage = () => {
         navigationAction={<BackButton fallback={backPath} />}
       />
       <Layouts.Content>
-        <Card padding={6}>
+        <ArtigoXmlNavigationContext.Provider value={navigation}>
+          <Card padding={6}>
           <Flex direction="column" alignItems="stretch" gap={5}>
             <Box>
               <Typography variant="delta" tag="h2">
@@ -324,23 +441,20 @@ export const ArtigoXmlPage = () => {
                   </Flex>
                   <Flex gap={2}>
                     {draftXml !== null && isDirty && (
-                      <Button
-                        variant="success"
-                        startIcon={<Check />}
-                        loading={isSaving}
-                        onClick={handleSaveDraft}
-                      >
-                        Salvar alterações
-                      </Button>
+                      <>
+                        <Button variant="tertiary" onClick={handleDiscardDraft}>
+                          Descartar alterações
+                        </Button>
+                        <Button
+                          variant="success"
+                          startIcon={<Check />}
+                          loading={isSaving}
+                          onClick={handleSaveDraft}
+                        >
+                          Salvar alterações
+                        </Button>
+                      </>
                     )}
-                    <Button
-                      variant="tertiary"
-                      startIcon={<Eye />}
-                      loading={isContentLoading}
-                      onClick={handleViewContent}
-                    >
-                      Visualizar artigo
-                    </Button>
                     <Button
                       variant="secondary"
                       startIcon={<Download />}
@@ -362,12 +476,12 @@ export const ArtigoXmlPage = () => {
 
                 {draftXml !== null && (
                   <Flex direction="column" alignItems="stretch" gap={3}>
-                    <Flex gap={2}>
+                    <Flex gap={2} alignItems="center" wrap="wrap" width="100%">
                       <Button
                         size="S"
                         variant={viewMode === 'rendered' ? 'secondary' : 'ghost'}
                         startIcon={<Eye />}
-                        onClick={() => setViewMode('rendered')}
+                        onClick={() => changeViewMode('rendered')}
                       >
                         Artigo renderizado
                       </Button>
@@ -375,26 +489,27 @@ export const ArtigoXmlPage = () => {
                         size="S"
                         variant={viewMode === 'raw' ? 'secondary' : 'ghost'}
                         startIcon={<Code />}
-                        onClick={() => setViewMode('raw')}
+                        onClick={() => changeViewMode('raw')}
                       >
                         XML bruto
                       </Button>
-                      <Button
+                      {/* <Button
                         size="S"
                         variant={viewMode === 'editor' ? 'secondary' : 'ghost'}
                         startIcon={<ListPlus />}
                         onClick={() => setViewMode('editor')}
                       >
                         Editor estruturado
-                      </Button>
+                      </Button> */}
                       <Button
                         size="S"
                         variant={viewMode === 'advanced' ? 'secondary' : 'ghost'}
                         startIcon={<Sparkle />}
-                        onClick={() => setViewMode('advanced')}
+                        onClick={() => changeViewMode('advanced')}
                       >
                         Editor avançado
                       </Button>
+                      {viewMode === 'advanced' && <AdvancedEditorSectionNav />}
                     </Flex>
 
                     {(viewMode === 'editor' || viewMode === 'advanced') && !isDraftValid ? (
@@ -407,29 +522,35 @@ export const ArtigoXmlPage = () => {
                       </Box>
                     ) : (
                       <Box
+                        ref={viewportRef}
+                        data-artigo-xml-viewport
                         background="neutral0"
                         hasRadius
                         borderColor="neutral200"
                         padding={viewMode === 'raw' ? 0 : 6}
-                        // The raw editor (CodeMirror) manages its own internal scrolling at a
-                        // fixed height, so this wrapper must not also scroll — doing both
-                        // produced a barely-there outer scrollbar alongside the real one.
-                        // `hidden` (rather than no overflow rule) still clips CodeMirror's
-                        // corners to the rounded border without adding a second scrollbar.
-                        maxHeight={viewMode === 'raw' ? undefined : '70vh'}
-                        overflow={viewMode === 'raw' ? 'hidden' : 'auto'}
+                        maxHeight="70vh"
+                        overflow="auto"
+                        style={{ position: 'relative' }}
                       >
-                        {viewMode === 'rendered' && (
+                        <Box hidden={viewMode !== 'rendered'}>
                           <ArticleRenderer xml={draftXml} onParseError={handleParseError} />
-                        )}
-                        {viewMode === 'raw' && (
+                        </Box>
+                        <Box hidden={viewMode !== 'raw'}>
                           <XmlCodeEditor value={draftXml} onChange={handleDraftChange} />
-                        )}
+                        </Box>
                         {viewMode === 'editor' && (
-                          <StructuredEditor xml={draftXml} onChange={handleDraftChange} />
+                          <StructuredEditor
+                            key={editorRevision}
+                            xml={draftXml}
+                            onChange={handleDraftChange}
+                          />
                         )}
                         {viewMode === 'advanced' && (
-                          <AdvancedEditor xml={draftXml} onChange={handleDraftChange} />
+                          <AdvancedEditor
+                            key={editorRevision}
+                            xml={draftXml}
+                            onChange={handleDraftChange}
+                          />
                         )}
                       </Box>
                     )}
@@ -465,6 +586,7 @@ export const ArtigoXmlPage = () => {
             </Field.Root>
           </Flex>
         </Card>
+        </ArtigoXmlNavigationContext.Provider>
       </Layouts.Content>
     </Page.Main>
   );

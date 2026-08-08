@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { createEditor, Descendant, Editor, Element as SlateElement, Path, Transforms } from 'slate';
+import { createEditor, Descendant, Editor, Element as SlateElement, NodeEntry, Path, Range, Transforms } from 'slate';
 import { withHistory } from 'slate-history';
-import { Editable, ReactEditor, RenderElementProps, Slate, useSlate, withReact } from 'slate-react';
+import { Editable, ReactEditor, RenderElementProps, RenderLeafProps, Slate, useSlate, withReact } from 'slate-react';
 import styled from 'styled-components';
 
 import {
@@ -15,14 +15,17 @@ import {
 import { directChild, ensureChild, listXrefTargets, XrefTarget } from './domMutations';
 import { FloatingToolbar } from './FloatingToolbar';
 import { renderInlineElement, renderInlineLeaf, withInlines } from './inlineModel';
-import { SlashMenuList, useSlashMenu } from './SlashMenu';
+import { SlashMenuList, SLASH_TRIGGER_TYPES, useSlashMenu } from './SlashMenu';
 import { useArticleDocument } from './useArticleDocument';
+import { BackMatterEditor } from './BackMatterEditor';
+import { ADVANCED_EDITOR_SECTION, ADVANCED_EDITOR_SECTION_NAV_OFFSET } from './advancedEditorSections';
 import {
   ArticleContainer,
   AttribText,
   BoxedText,
   CaptionHeading,
   FigureWrapper,
+  SectionHeading,
   TableWrapper,
 } from '../styles';
 
@@ -37,6 +40,8 @@ const ensureBody = (article: Element): Element => {
 
 /** Debounce (ms) between a content keystroke and re-serializing/committing the whole body. */
 const COMMIT_DEBOUNCE_MS = 800;
+
+const EMPTY_BLOCK_PLACEHOLDER = "Pressione '/' para adicionar um elemento";
 
 interface AdvancedEditorProps {
   xml: string;
@@ -53,6 +58,7 @@ export const AdvancedEditor: React.FC<AdvancedEditorProps> = ({ xml, onChange })
   const { doc, commit } = useArticleDocument(xml, onChange);
   const editor = React.useMemo(() => withInlines(withHistory(withReact(createEditor()))), []);
   const [initialValue] = React.useState<BlockElement[]>(() => deserializeBody(ensureBody(doc.documentElement)));
+  // Recomputed every render — `doc` is mutated in place when back matter changes.
   const xrefTargets = listXrefTargets(doc);
 
   const commitTimeoutRef = React.useRef<number>();
@@ -109,9 +115,12 @@ export const AdvancedEditor: React.FC<AdvancedEditorProps> = ({ xml, onChange })
   return (
     <EditorShell>
       <ArticleContainer>
-        <Slate editor={editor} initialValue={initialValue} onChange={handleChange}>
-          <EditorBody renderElement={renderElement} onBlur={handleBlur} xrefTargets={xrefTargets} />
-        </Slate>
+        <BodySection data-advanced-editor-section={ADVANCED_EDITOR_SECTION.body}>
+          <Slate editor={editor} initialValue={initialValue} onChange={handleChange}>
+            <EditorBody renderElement={renderElement} onBlur={handleBlur} xrefTargets={xrefTargets} />
+          </Slate>
+        </BodySection>
+        <BackMatterEditor doc={doc} commit={commit} xrefTargets={xrefTargets} />
       </ArticleContainer>
     </EditorShell>
   );
@@ -130,22 +139,76 @@ const EditorBody: React.FC<{
   const editor = useSlate();
   const slashMenu = useSlashMenu(editor);
 
+  const decorate = React.useCallback(
+    ([node, path]: NodeEntry) => {
+      const { selection } = editor;
+      if (
+        !selection ||
+        !Range.isCollapsed(selection) ||
+        !ReactEditor.isFocused(editor) ||
+        Editor.isEditor(node) ||
+        path.length === 0
+      ) {
+        return [];
+      }
+
+      const parentPath = Path.parent(path);
+      let parent;
+      try {
+        [parent] = Editor.node(editor, parentPath);
+      } catch {
+        return [];
+      }
+
+      if (
+        !SlateElement.isElement(parent) ||
+        !SLASH_TRIGGER_TYPES.has(parent.type) ||
+        Editor.string(editor, parentPath).trim() !== '' ||
+        !Range.includes(selection, parentPath)
+      ) {
+        return [];
+      }
+
+      const at = Editor.start(editor, parentPath);
+      return [{ anchor: at, focus: at, emptyBlockPlaceholder: true }];
+    },
+    [editor]
+  );
+
+  const renderLeaf = React.useCallback((props: RenderLeafProps) => {
+    if ('emptyBlockPlaceholder' in props.leaf) {
+      return (
+        <>
+          {renderInlineLeaf(props)}
+          <BlockPlaceholder contentEditable={false} suppressContentEditableWarning>
+            {EMPTY_BLOCK_PLACEHOLDER}
+          </BlockPlaceholder>
+        </>
+      );
+    }
+    return renderInlineLeaf(props);
+  }, []);
+
   return (
     <>
       <Editable
+        decorate={decorate}
         renderElement={renderElement}
-        renderLeaf={renderInlineLeaf}
+        renderLeaf={renderLeaf}
         onBlur={onBlur}
         onKeyDown={(event) => {
           slashMenu.handleKeyDown(event);
         }}
-        placeholder="Comece a escrever o corpo do artigo…"
       />
-      <SlashMenuList controller={slashMenu} />
+      <SlashMenuList controller={slashMenu} editor={editor} />
       <FloatingToolbar xrefTargets={xrefTargets} />
     </>
   );
 };
+
+const BodySection = styled.div`
+  scroll-margin-top: ${ADVANCED_EDITOR_SECTION_NAV_OFFSET}px;
+`;
 
 const EditorShell = styled.div`
   padding: 2rem 1.5rem;
@@ -154,6 +217,20 @@ const EditorShell = styled.div`
   [data-slate-editor='true'] {
     outline: none;
   }
+
+  [data-slate-node='text'] {
+    position: relative;
+  }
+`;
+
+const BlockPlaceholder = styled.span`
+  position: absolute;
+  width: max-content;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  user-select: none;
+  color: #8e8ea9;
 `;
 
 // --- Per-block rendering --------------------------------------------------------------
@@ -187,17 +264,13 @@ const BlockElementView: React.FC<BlockElementViewProps> = (props) => {
         return <p {...chromeAttributes}>{children}</p>;
 
       case 'heading': {
-        // A dynamically-typed tag name (`keyof JSX.IntrinsicElements`) combined with
-        // spread Slate `attributes` blows up TS's overload resolution ("union type too
-        // complex"), so this is spelled out instead of the read-only renderer's dynamic-tag trick.
-        switch (Math.min(element.depth, 4)) {
-          case 2:
-            return <h2 {...attributes}>{children}</h2>;
-          case 3:
-            return <h3 {...attributes}>{children}</h3>;
-          default:
-            return <h4 {...attributes}>{children}</h4>;
-        }
+        const depth = Math.min(element.depth, 4);
+        const tag = depth <= 2 ? 'h2' : depth === 3 ? 'h3' : 'h4';
+        return (
+          <SectionHeading as={tag} $depth={depth} {...attributes}>
+            {children}
+          </SectionHeading>
+        );
       }
 
       case 'section':
@@ -327,9 +400,9 @@ const BlockChrome: React.FC<{
         <GutterButton type="button" title="Adicionar bloco abaixo" onMouseDown={handleAddBelow}>
           +
         </GutterButton>
-        <GutterButton type="button" title="Arrastar para reordenar" draggable onDragStart={handleDragStart} $grab>
+        {/* <GutterButton type="button" title="Arrastar para reordenar" draggable onDragStart={handleDragStart} $grab>
           ⠿
-        </GutterButton>
+        </GutterButton> */}
       </BlockGutter>
       <BlockContent>{children}</BlockContent>
     </BlockRow>

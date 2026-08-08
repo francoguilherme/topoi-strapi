@@ -26,7 +26,6 @@ export const ArticleContainer = styled.div`
   h2,
   h3,
   h4 {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     color: #212134;
     line-height: 1.3;
   }
@@ -51,6 +50,24 @@ export const ArticleContainer = styled.div`
   h4 {
     font-size: 1rem;
     margin: 1.25em 0 0.5em;
+  }
+
+  section > h2,
+  section > h3,
+  section > h4 {
+    font-weight: 600;
+  }
+
+  section > h2 {
+    font-size: 1.7rem;
+  }
+
+  section > h3 {
+    font-size: 1.15rem;
+  }
+
+  section > h4 {
+    font-size: 1.075rem;
   }
 
   p {
@@ -198,6 +215,11 @@ export const BackSection = styled.div`
   margin-top: 2.5em;
   padding-top: 1em;
   border-top: 2px solid #eaeaef;
+
+  h2 {
+    font-size: 1.7rem;
+    font-weight: 600;
+  }
 `;
 
 export const FootnoteEntry = styled.div`
@@ -206,7 +228,7 @@ export const FootnoteEntry = styled.div`
   margin-bottom: 0.75em;
   padding: 0.3em 0.4em;
   border-radius: 4px;
-  font-size: 0.9rem;
+  font-size: 1.5rem;
   scroll-margin-top: 1em;
 
   p {
@@ -227,7 +249,7 @@ export const FootnoteLabel = styled.span`
 export const ReferenceEntry = styled.p`
   text-align: left !important;
   margin: 0 0 0.85em !important;
-  font-size: 0.95rem;
+  font-size: 1.5rem;
   padding-left: 1.5em;
   text-indent: -1.5em;
   scroll-margin-top: 1em;
@@ -243,4 +265,16 @@ export const MetaFooter = styled.p`
   font-size: 0.85rem;
   color: #666687;
   margin-top: 2em !important;
+`;
+
+/** Section `<title>` heading — slightly larger than body text, scaled by nesting depth. */
+export const SectionHeading = styled.h2<{ $depth: number }>`
+  color: #212134;
+  line-height: 1.3;
+  font-weight: 600;
+  font-size: ${({ $depth }) => ($depth <= 2 ? '1.3rem' : $depth === 3 ? '1.15rem' : '1.075rem')};
+  margin: ${({ $depth }) =>
+    $depth <= 2 ? '1.75em 0 0.75em' : $depth === 3 ? '1.5em 0 0.5em' : '1.25em 0 0.5em'};
+  padding-bottom: ${({ $depth }) => ($depth <= 2 ? '0.3em' : '0')};
+  border-bottom: ${({ $depth }) => ($depth <= 2 ? '1px solid #eaeaef' : 'none')};
 `;

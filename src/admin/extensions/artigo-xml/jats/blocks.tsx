@@ -7,6 +7,7 @@ import {
   Blockquote,
   CaptionHeading,
   FigureWrapper,
+  SectionHeading,
   TableWrapper,
 } from './styles';
 
@@ -150,14 +151,19 @@ const Section: React.FC<{ el: Element; keyPrefix: string; depth: number }> = ({
   depth,
 }) => {
   const titleEl = directChild(el, 'title');
-  const HeadingTag = (`h${Math.min(depth, 4)}` as unknown) as keyof JSX.IntrinsicElements;
+  const headingDepth = Math.min(depth, 4);
+  const headingTag = headingDepth <= 2 ? 'h2' : headingDepth === 3 ? 'h3' : 'h4';
   const otherChildren = Array.from(el.childNodes).filter(
     (child) => !(child.nodeType === Node.ELEMENT_NODE && (child as Element) === titleEl)
   );
 
   return (
     <section id={el.getAttribute('id') || undefined}>
-      {titleEl && <HeadingTag>{renderInlineNodes(titleEl.childNodes, `${keyPrefix}-title`)}</HeadingTag>}
+      {titleEl && (
+        <SectionHeading as={headingTag} $depth={headingDepth}>
+          {renderInlineNodes(titleEl.childNodes, `${keyPrefix}-title`)}
+        </SectionHeading>
+      )}
       {renderBlockNodes(otherChildren, keyPrefix, depth + 1)}
     </section>
   );

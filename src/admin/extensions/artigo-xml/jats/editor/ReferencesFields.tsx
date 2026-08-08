@@ -85,7 +85,7 @@ const ReferenceRow: React.FC<{ refEl: Element; doc: Document; commit: () => void
         <Flex justifyContent="space-between" alignItems="flex-start">
           <Typography variant="pi" textColor="neutral600">
             id: {id}
-            {hasElementCitation ? ' · possui dados estruturados (element-citation) preservados' : ''}
+            {hasElementCitation ? ' · citação estruturada no XML (não editável aqui)' : ''}
           </Typography>
           <ItemToolbar onRemove={handleRemove} removeLabel="Remover referência" />
         </Flex>
