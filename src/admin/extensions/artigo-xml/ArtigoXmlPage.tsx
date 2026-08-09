@@ -184,9 +184,18 @@ export const ArtigoXmlPage = () => {
       try {
         const response = await fetch(buildFileUrl(xmlFile.url));
         const text = await response.text();
+        let content = text;
+        try {
+          content = normalizeJatsXml(text);
+        } catch {
+          toggleNotification({
+            type: 'warning',
+            message: 'O XML foi carregado, mas não pôde ser formatado automaticamente.',
+          });
+        }
         setViewMode('rendered');
-        setLastSavedXml(text);
-        setDraftXml(text);
+        setLastSavedXml(content);
+        setDraftXml(content);
         setSaveError(null);
       } catch {
         toggleNotification({
@@ -343,8 +352,10 @@ export const ArtigoXmlPage = () => {
       return;
     }
 
+    let normalizedXml: string;
     try {
       parseJatsXml(draftXml);
+      normalizedXml = normalizeJatsXml(draftXml);
     } catch (error) {
       setSaveError(
         error instanceof JatsParseError
@@ -358,10 +369,12 @@ export const ArtigoXmlPage = () => {
     setIsSaving(true);
 
     try {
-      const file = new File([draftXml], artigo.xml.name, { type: 'application/xml' });
+      const file = new File([normalizedXml], artigo.xml.name, { type: 'application/xml' });
       const succeeded = await replaceXmlFile(file);
       if (succeeded) {
-        setLastSavedXml(draftXml);
+        setLastSavedXml(normalizedXml);
+        setDraftXml(normalizedXml);
+        setEditorRevision((revision) => revision + 1);
         toggleNotification({ type: 'success', message: 'XML salvo com sucesso.' });
         await fetchArtigo();
       }

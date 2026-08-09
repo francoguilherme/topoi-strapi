@@ -5,11 +5,17 @@ import { Editable, ReactEditor, RenderElementProps, RenderLeafProps, Slate, useS
 import styled from 'styled-components';
 
 import {
+  addTableColumn,
+  addTableRow,
   BlockElement,
   createEmptyParagraph,
   deserializeBody,
   FigureElement,
+  getHeaderRowCount,
+  removeTableColumn,
+  removeTableRow,
   serializeBody,
+  setTableHeaderRow,
   TableElement,
 } from './advancedBlocks';
 import { directChild, ensureChild, listXrefTargets, XrefTarget } from './domMutations';
@@ -472,11 +478,33 @@ const TableBlockView: React.FC<{
   editor: Editor;
   children: React.ReactNode;
 }> = ({ attributes, element, editor, children }) => {
+  const headerRowCount = getHeaderRowCount(element.tableTemplate);
+  const hasHeader = headerRowCount > 0;
+  const colCount = element.rows.reduce((max, row) => Math.max(max, row.length), 1);
+  const canRemoveRow = element.rows.length > 1;
+  const canRemoveColumn = colCount > 1;
+
   const setRow = (rowIndex: number, cellIndex: number, text: string) => {
     const rows = element.rows.map((row, r) =>
       r === rowIndex ? row.map((cell, c) => (c === cellIndex ? text : cell)) : row
     );
     updateVoidElement(editor, element, { rows });
+  };
+
+  const renderRow = (row: string[], rowIndex: number, cellTag: 'th' | 'td') => {
+    const CellTag = cellTag;
+
+    return (
+      // eslint-disable-next-line react/no-array-index-key
+      <tr key={rowIndex}>
+        {row.map((cell, c) => (
+          // eslint-disable-next-line react/no-array-index-key
+          <CellTag key={c}>
+            <FieldInput value={cell} onChange={(e) => setRow(rowIndex, c, e.target.value)} />
+          </CellTag>
+        ))}
+      </tr>
+    );
   };
 
   return (
@@ -504,19 +532,62 @@ const TableBlockView: React.FC<{
             {element.captionTitle}
           </CaptionHeading>
         )}
+        <TableStructureActions>
+          <TableActionButton
+            type="button"
+            $active={hasHeader}
+            title={hasHeader ? 'Remover cabeçalho da primeira linha' : 'Usar primeira linha como cabeçalho'}
+            onClick={() => updateVoidElement(editor, element, setTableHeaderRow(element, !hasHeader))}
+          >
+            Cabeçalho
+          </TableActionButton>
+          <TableActionButton
+            type="button"
+            title="Adicionar linha"
+            onClick={() => updateVoidElement(editor, element, addTableRow(element))}
+          >
+            + Linha
+          </TableActionButton>
+          <TableActionButton
+            type="button"
+            title="Remover última linha"
+            disabled={!canRemoveRow}
+            onClick={() => {
+              const patch = removeTableRow(element);
+              if (patch) {
+                updateVoidElement(editor, element, patch);
+              }
+            }}
+          >
+            − Linha
+          </TableActionButton>
+          <TableActionButton
+            type="button"
+            title="Adicionar coluna"
+            onClick={() => updateVoidElement(editor, element, addTableColumn(element))}
+          >
+            + Coluna
+          </TableActionButton>
+          <TableActionButton
+            type="button"
+            title="Remover última coluna"
+            disabled={!canRemoveColumn}
+            onClick={() => {
+              const patch = removeTableColumn(element);
+              if (patch) {
+                updateVoidElement(editor, element, patch);
+              }
+            }}
+          >
+            − Coluna
+          </TableActionButton>
+        </TableStructureActions>
         <table>
+          {headerRowCount > 0 && (
+            <thead>{element.rows.slice(0, headerRowCount).map((row, r) => renderRow(row, r, 'th'))}</thead>
+          )}
           <tbody>
-            {element.rows.map((row, r) => (
-              // eslint-disable-next-line react/no-array-index-key
-              <tr key={r}>
-                {row.map((cell, c) => (
-                  // eslint-disable-next-line react/no-array-index-key
-                  <td key={c}>
-                    <FieldInput value={cell} onChange={(e) => setRow(r, c, e.target.value)} />
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {element.rows.slice(headerRowCount).map((row, r) => renderRow(row, headerRowCount + r, 'td'))}
           </tbody>
         </table>
         <FieldInput
@@ -594,5 +665,30 @@ const FieldInput = styled.input`
   &:focus {
     outline: none;
     border-color: #4945ff;
+  }
+`;
+
+const TableStructureActions = styled.div`
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+`;
+
+const TableActionButton = styled.button<{ $active?: boolean; disabled?: boolean }>`
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 0.75em;
+  line-height: 1.4;
+  border: 1px solid ${({ $active }) => ($active ? '#4945ff' : '#dcdce4')};
+  border-radius: 4px;
+  background: ${({ $active }) => ($active ? '#f0f0ff' : '#fff')};
+  color: ${({ $active }) => ($active ? '#4945ff' : '#666687')};
+  cursor: ${({ disabled }) => (disabled ? 'not-allowed' : 'pointer')};
+  opacity: ${({ disabled }) => (disabled ? 0.45 : 1)};
+  white-space: nowrap;
+
+  &:hover:not(:disabled) {
+    border-color: #4945ff;
+    color: #4945ff;
   }
 `;

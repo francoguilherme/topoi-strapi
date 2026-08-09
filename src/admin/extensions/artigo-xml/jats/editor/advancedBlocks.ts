@@ -160,6 +160,89 @@ export const BLOCK_KIND_LABELS: Record<BlockKind, string> = {
 const createDefaultTableTemplate = (): Element =>
   new DOMParser().parseFromString('<table><tr><td/></tr></table>', 'application/xml').documentElement;
 
+/** Number of `<thead>` rows in a table template (0 when all rows live in `<tbody>`). */
+export const getHeaderRowCount = (table: Element): number => {
+  const thead = table.querySelector('thead');
+  return thead ? thead.querySelectorAll(':scope > tr').length : 0;
+};
+
+const rebuildTableTemplate = (rows: string[][], headerRowCount: number, base?: Element): Element => {
+  const doc = base?.ownerDocument ?? new DOMParser().parseFromString('<table/>', 'application/xml');
+  const table = doc.createElement('table');
+  if (base) {
+    Array.from(base.attributes).forEach((attr) => {
+      table.setAttribute(attr.name, attr.value);
+    });
+  }
+
+  const appendRow = (parent: Element, colCount: number, cellTag: 'th' | 'td') => {
+    const tr = doc.createElement('tr');
+    for (let c = 0; c < colCount; c += 1) {
+      tr.appendChild(doc.createElement(cellTag));
+    }
+    parent.appendChild(tr);
+  };
+
+  const colCount = rows.reduce((max, row) => Math.max(max, row.length), 1);
+
+  if (headerRowCount > 0) {
+    const thead = doc.createElement('thead');
+    for (let r = 0; r < headerRowCount; r += 1) {
+      appendRow(thead, rows[r]?.length ?? colCount, 'th');
+    }
+    table.appendChild(thead);
+  }
+
+  const tbody = doc.createElement('tbody');
+  for (let r = headerRowCount; r < rows.length; r += 1) {
+    appendRow(tbody, rows[r]?.length ?? colCount, 'td');
+  }
+  table.appendChild(tbody);
+
+  return table;
+};
+
+export const addTableRow = (element: TableElement): Pick<TableElement, 'rows' | 'tableTemplate'> => {
+  const colCount = element.rows.reduce((max, row) => Math.max(max, row.length), 1);
+  const rows = [...element.rows, Array<string>(colCount).fill('')];
+  const headerRowCount = getHeaderRowCount(element.tableTemplate);
+  return { rows, tableTemplate: rebuildTableTemplate(rows, headerRowCount, element.tableTemplate) };
+};
+
+export const addTableColumn = (element: TableElement): Pick<TableElement, 'rows' | 'tableTemplate'> => {
+  const rows = element.rows.map((row) => [...row, '']);
+  const headerRowCount = getHeaderRowCount(element.tableTemplate);
+  return { rows, tableTemplate: rebuildTableTemplate(rows, headerRowCount, element.tableTemplate) };
+};
+
+export const removeTableRow = (element: TableElement): Pick<TableElement, 'rows' | 'tableTemplate'> | null => {
+  if (element.rows.length <= 1) {
+    return null;
+  }
+  const rows = element.rows.slice(0, -1);
+  const headerRowCount = Math.min(getHeaderRowCount(element.tableTemplate), rows.length);
+  return { rows, tableTemplate: rebuildTableTemplate(rows, headerRowCount, element.tableTemplate) };
+};
+
+export const removeTableColumn = (element: TableElement): Pick<TableElement, 'rows' | 'tableTemplate'> | null => {
+  const colCount = element.rows.reduce((max, row) => Math.max(max, row.length), 1);
+  if (colCount <= 1) {
+    return null;
+  }
+  const rows = element.rows.map((row) => row.slice(0, -1));
+  const headerRowCount = getHeaderRowCount(element.tableTemplate);
+  return { rows, tableTemplate: rebuildTableTemplate(rows, headerRowCount, element.tableTemplate) };
+};
+
+/** Toggles whether the first row is rendered as a `<thead>` header row. */
+export const setTableHeaderRow = (
+  element: TableElement,
+  enabled: boolean
+): Pick<TableElement, 'rows' | 'tableTemplate'> => ({
+  rows: element.rows,
+  tableTemplate: rebuildTableTemplate(element.rows, enabled ? 1 : 0, element.tableTemplate),
+});
+
 export const createEmptyParagraph = (): ParagraphElement => ({ type: 'paragraph', children: [{ text: '' }] });
 
 /** Builds a fresh, empty block of `kind`, used by the slash menu and the "+" button. */
