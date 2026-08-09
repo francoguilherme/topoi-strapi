@@ -584,7 +584,7 @@ const Flex2 = styled.div<{ gap?: string }>`
 const FieldInput = styled.input`
   width: 100%;
   font: inherit;
-  font-size: 0.85rem;
+  font-size: 0.9em;
   padding: 4px 6px;
   border: 1px solid #dcdce4;
   border-radius: 4px;

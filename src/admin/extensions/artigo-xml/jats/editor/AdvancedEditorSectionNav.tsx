@@ -34,14 +34,14 @@ const NavGroup = styled.nav`
   align-items: center;
   gap: 4px;
   margin-left: auto;
-  padding: 6px 12px;
+  padding: 4px 10px;
   border: 1px dashed #c0c0cf;
   border-radius: 6px;
   background: #f6f6f9;
 `;
 
 const NavLabel = styled.span`
-  font-size: 0.8125rem;
+  font-size: 1rem;
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -61,7 +61,7 @@ const NavButton = styled.button`
   border-radius: 4px;
   background: transparent;
   color: #4945ff;
-  font-size: 0.875rem;
+  font-size: 1rem;
   font-weight: 600;
   line-height: 1.3;
   padding: 5px 8px;
