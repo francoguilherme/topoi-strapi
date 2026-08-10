@@ -18,14 +18,14 @@ const SLASH_TRIGGER_TYPES = new Set(['paragraph', 'quote-attrib']);
 export { SLASH_TRIGGER_TYPES };
 
 const BLOCK_KIND_ORDER: BlockKind[] = [
-  'paragraph',
+  //'paragraph',
   'section',
-  'bulleted-list',
-  'numbered-list',
+  //'bulleted-list',
+  //'numbered-list',
   'quote',
   'table',
   'figure',
-  'boxed-text',
+  //'boxed-text',
 ];
 
 interface SlashTarget {
@@ -238,7 +238,7 @@ const MenuPortal = styled.div`
 const MenuItem = styled.div<{ $active?: boolean }>`
   padding: 6px 10px;
   border-radius: 4px;
-  font-size: 1.2rem;
+  font-size: 1.4rem;
   cursor: pointer;
   background: ${({ $active }) => ($active ? '#f0f0ff' : 'transparent')};
   color: #32324d;

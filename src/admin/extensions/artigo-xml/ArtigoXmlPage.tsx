@@ -64,6 +64,7 @@ export const ArtigoXmlPage = () => {
   const [draftXml, setDraftXml] = React.useState<string | null>(null);
   const [viewMode, setViewMode] = React.useState<'rendered' | 'raw' | 'editor' | 'advanced'>('rendered');
   const [editorRevision, setEditorRevision] = React.useState(0);
+  const [pendingFileName, setPendingFileName] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const loadedXmlIdRef = React.useRef<number | null>(null);
   const viewportRef = React.useRef<HTMLDivElement>(null);
@@ -304,10 +305,9 @@ export const ArtigoXmlPage = () => {
     setIsUploading(true);
 
     try {
-      let normalizedFile: File;
+      let normalizedXml: string;
       try {
-        const normalized = normalizeJatsXml(await file.text());
-        normalizedFile = new File([normalized], file.name, { type: file.type || 'application/xml' });
+        normalizedXml = normalizeJatsXml(await file.text());
       } catch {
         toggleNotification({
           type: 'danger',
@@ -317,6 +317,20 @@ export const ArtigoXmlPage = () => {
         return;
       }
 
+      // When the article already has an XML, load the new file into the draft
+      // so the user can review it before explicitly saving.
+      if (artigo?.xml) {
+        setViewMode('rendered');
+        setDraftXml(normalizedXml);
+        setPendingFileName(file.name);
+        setSaveError(null);
+        setEditorRevision((revision) => revision + 1);
+        return;
+      }
+
+      const normalizedFile = new File([normalizedXml], file.name, {
+        type: file.type || 'application/xml',
+      });
       const succeeded = await replaceXmlFile(normalizedFile);
       if (succeeded) {
         setLastSavedXml(null);
@@ -343,6 +357,7 @@ export const ArtigoXmlPage = () => {
 
   const handleDiscardDraft = React.useCallback(() => {
     setDraftXml(lastSavedXml);
+    setPendingFileName(null);
     setSaveError(null);
     setEditorRevision((revision) => revision + 1);
   }, [lastSavedXml]);
@@ -369,11 +384,13 @@ export const ArtigoXmlPage = () => {
     setIsSaving(true);
 
     try {
-      const file = new File([normalizedXml], artigo.xml.name, { type: 'application/xml' });
+      const fileName = pendingFileName ?? artigo.xml.name;
+      const file = new File([normalizedXml], fileName, { type: 'application/xml' });
       const succeeded = await replaceXmlFile(file);
       if (succeeded) {
         setLastSavedXml(normalizedXml);
         setDraftXml(normalizedXml);
+        setPendingFileName(null);
         setEditorRevision((revision) => revision + 1);
         toggleNotification({ type: 'success', message: 'XML salvo com sucesso.' });
         await fetchArtigo();
@@ -381,7 +398,7 @@ export const ArtigoXmlPage = () => {
     } finally {
       setIsSaving(false);
     }
-  }, [draftXml, artigo?.xml, replaceXmlFile, fetchArtigo, toggleNotification]);
+  }, [draftXml, artigo?.xml, pendingFileName, replaceXmlFile, fetchArtigo, toggleNotification]);
 
   // Best-effort warning so an accidental tab close/navigation doesn't silently
   // discard edits that were never saved.
@@ -441,7 +458,7 @@ export const ArtigoXmlPage = () => {
                 <Flex justifyContent="space-between" alignItems="center" wrap="wrap" gap={3}>
                   <Flex direction="column" alignItems="flex-start" gap={1}>
                     <Typography fontWeight="semiBold">
-                      {artigo.xml.name}
+                      {pendingFileName ?? artigo.xml.name}
                       {isDirty && ' *'}
                     </Typography>
                     <Typography variant="pi" textColor="neutral600">
@@ -498,14 +515,6 @@ export const ArtigoXmlPage = () => {
                       >
                         Artigo renderizado
                       </Button>
-                      <Button
-                        size="S"
-                        variant={viewMode === 'raw' ? 'secondary' : 'ghost'}
-                        startIcon={<Code />}
-                        onClick={() => changeViewMode('raw')}
-                      >
-                        XML bruto
-                      </Button>
                       {/* <Button
                         size="S"
                         variant={viewMode === 'editor' ? 'secondary' : 'ghost'}
@@ -521,6 +530,14 @@ export const ArtigoXmlPage = () => {
                         onClick={() => changeViewMode('advanced')}
                       >
                         Editor avançado
+                      </Button>
+                      <Button
+                        size="S"
+                        variant={viewMode === 'raw' ? 'secondary' : 'ghost'}
+                        startIcon={<Code />}
+                        onClick={() => changeViewMode('raw')}
+                      >
+                        XML bruto
                       </Button>
                       {viewMode === 'advanced' && <AdvancedEditorSectionNav />}
                     </Flex>

@@ -148,7 +148,7 @@ export type BlockKind =
 
 export const BLOCK_KIND_LABELS: Record<BlockKind, string> = {
   paragraph: 'Parágrafo',
-  section: 'Subseção',
+  section: 'Seção',
   quote: 'Citação em bloco',
   'bulleted-list': 'Lista com marcadores',
   'numbered-list': 'Lista numerada',
@@ -439,9 +439,20 @@ const serializeSection = (node: SectionElement, doc: Document): Element => {
   if (node.sectionId) {
     el.setAttribute('id', node.sectionId);
   }
-  const [heading, ...body] = node.children;
+
+  // Defensive: `withSections`' `normalizeNode` guarantees `children[0]` is always the
+  // `heading`, but this is the last line of defense before export — if that invariant
+  // were ever violated (a bug, a future code path bypassing the editor's own
+  // normalization…), treat the whole thing as body content under an empty `<title>`
+  // rather than silently serializing an arbitrary content block as the section's title.
+  const [firstChild, ...rest] = node.children;
+  const heading = firstChild.type === 'heading' ? firstChild : null;
+  const body: BlockElement[] = heading ? rest : (node.children as unknown as BlockElement[]);
+
   const title = doc.createElement('title');
-  serializeInline(heading.children, doc).forEach((child) => title.appendChild(child));
+  if (heading) {
+    serializeInline(heading.children, doc).forEach((child) => title.appendChild(child));
+  }
   el.appendChild(title);
   serializeBody(body, doc).forEach((child) => el.appendChild(child));
   return el;

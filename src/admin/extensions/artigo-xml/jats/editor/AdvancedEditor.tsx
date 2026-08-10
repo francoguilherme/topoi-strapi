@@ -21,6 +21,7 @@ import {
 import { directChild, ensureChild, listXrefTargets, XrefTarget } from './domMutations';
 import { FloatingToolbar } from './FloatingToolbar';
 import { renderInlineElement, renderInlineLeaf, withInlines } from './inlineModel';
+import { handleSectionTabKey, withSections } from './sectionEditing';
 import { SlashMenuList, SLASH_TRIGGER_TYPES, useSlashMenu } from './SlashMenu';
 import { useArticleDocument } from './useArticleDocument';
 import { BackMatterEditor } from './BackMatterEditor';
@@ -48,6 +49,42 @@ const ensureBody = (article: Element): Element => {
 const COMMIT_DEBOUNCE_MS = 800;
 
 const EMPTY_BLOCK_PLACEHOLDER = "Pressione '/' para adicionar um elemento";
+const SECTION_TITLE_PLACEHOLDER = 'Título da seção';
+const SECTION_CONTENT_PLACEHOLDER = 'Conteúdo da seção';
+
+const getEmptyBlockPlaceholder = (editor: Editor, parentPath: Path): string | null => {
+  let parent;
+  try {
+    [parent] = Editor.node(editor, parentPath);
+  } catch {
+    return null;
+  }
+  if (!SlateElement.isElement(parent)) {
+    return null;
+  }
+
+  if (parent.type === 'heading') {
+    return SECTION_TITLE_PLACEHOLDER;
+  }
+
+  if (parent.type === 'paragraph') {
+    const grandparentPath = Path.parent(parentPath);
+    try {
+      const [grandparent] = Editor.node(editor, grandparentPath);
+      if (SlateElement.isElement(grandparent) && grandparent.type === 'section') {
+        return SECTION_CONTENT_PLACEHOLDER;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (SLASH_TRIGGER_TYPES.has(parent.type)) {
+    return EMPTY_BLOCK_PLACEHOLDER;
+  }
+
+  return null;
+};
 
 interface AdvancedEditorProps {
   xml: string;
@@ -62,7 +99,10 @@ interface AdvancedEditorProps {
  */
 export const AdvancedEditor: React.FC<AdvancedEditorProps> = ({ xml, onChange }) => {
   const { doc, commit } = useArticleDocument(xml, onChange);
-  const editor = React.useMemo(() => withInlines(withHistory(withReact(createEditor()))), []);
+  const editor = React.useMemo(
+    () => withSections(withInlines(withHistory(withReact(createEditor())))),
+    []
+  );
   const [initialValue] = React.useState<BlockElement[]>(() => deserializeBody(ensureBody(doc.documentElement)));
   // Recomputed every render — `doc` is mutated in place when back matter changes.
   const xrefTargets = listXrefTargets(doc);
@@ -147,14 +187,7 @@ const EditorBody: React.FC<{
 
   const decorate = React.useCallback(
     ([node, path]: NodeEntry) => {
-      const { selection } = editor;
-      if (
-        !selection ||
-        !Range.isCollapsed(selection) ||
-        !ReactEditor.isFocused(editor) ||
-        Editor.isEditor(node) ||
-        path.length === 0
-      ) {
+      if (Editor.isEditor(node) || path.length === 0) {
         return [];
       }
 
@@ -166,28 +199,48 @@ const EditorBody: React.FC<{
         return [];
       }
 
+      if (!SlateElement.isElement(parent) || Editor.string(editor, parentPath).trim() !== '') {
+        return [];
+      }
+
+      // Section titles always show their placeholder while empty, even without focus.
+      if (parent.type === 'heading') {
+        const at = Editor.start(editor, parentPath);
+        return [{ anchor: at, focus: at, blockPlaceholder: SECTION_TITLE_PLACEHOLDER }];
+      }
+
+      const { selection } = editor;
       if (
-        !SlateElement.isElement(parent) ||
-        !SLASH_TRIGGER_TYPES.has(parent.type) ||
-        Editor.string(editor, parentPath).trim() !== '' ||
+        !selection ||
+        !Range.isCollapsed(selection) ||
+        !ReactEditor.isFocused(editor) ||
         !Range.includes(selection, parentPath)
       ) {
         return [];
       }
 
+      const placeholder = getEmptyBlockPlaceholder(editor, parentPath);
+      if (!placeholder) {
+        return [];
+      }
+
       const at = Editor.start(editor, parentPath);
-      return [{ anchor: at, focus: at, emptyBlockPlaceholder: true }];
+      return [{ anchor: at, focus: at, blockPlaceholder: placeholder }];
     },
     [editor]
   );
 
   const renderLeaf = React.useCallback((props: RenderLeafProps) => {
-    if ('emptyBlockPlaceholder' in props.leaf) {
+    const placeholder =
+      'blockPlaceholder' in props.leaf && typeof props.leaf.blockPlaceholder === 'string'
+        ? props.leaf.blockPlaceholder
+        : null;
+    if (placeholder) {
       return (
         <>
           {renderInlineLeaf(props)}
           <BlockPlaceholder contentEditable={false} suppressContentEditableWarning>
-            {EMPTY_BLOCK_PLACEHOLDER}
+            {placeholder}
           </BlockPlaceholder>
         </>
       );
@@ -203,7 +256,10 @@ const EditorBody: React.FC<{
         renderLeaf={renderLeaf}
         onBlur={onBlur}
         onKeyDown={(event) => {
-          slashMenu.handleKeyDown(event);
+          if (slashMenu.handleKeyDown(event)) {
+            return;
+          }
+          handleSectionTabKey(editor, event);
         }}
       />
       <SlashMenuList controller={slashMenu} editor={editor} />
@@ -237,6 +293,13 @@ const BlockPlaceholder = styled.span`
   pointer-events: none;
   user-select: none;
   color: #8e8ea9;
+`;
+
+/** Body blocks inside a section sit slightly inset; the `<title>` (first child) stays flush. */
+const SectionBlock = styled.section`
+  & > *:not(:first-child) {
+    padding-left: 1rem;
+  }
 `;
 
 // --- Per-block rendering --------------------------------------------------------------
@@ -280,7 +343,7 @@ const BlockElementView: React.FC<BlockElementViewProps> = (props) => {
       }
 
       case 'section':
-        return <section {...chromeAttributes}>{children}</section>;
+        return <SectionBlock {...chromeAttributes}>{children}</SectionBlock>;
 
       case 'list': {
         const ListTag = element.ordered ? 'ol' : 'ul';
