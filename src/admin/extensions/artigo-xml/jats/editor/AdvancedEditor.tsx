@@ -20,9 +20,11 @@ import {
 } from './advancedBlocks';
 import { directChild, ensureChild, listXrefTargets, XrefTarget } from './domMutations';
 import { FloatingToolbar } from './FloatingToolbar';
-import { renderInlineElement, renderInlineLeaf, withInlines } from './inlineModel';
+import { InlineRichEditor } from './InlineRichEditor';
+import { InlineNode, renderInlineElement, renderInlineLeaf, withInlines } from './inlineModel';
+import { withQuotes } from './quoteEditing';
 import { handleSectionTabKey, withSections } from './sectionEditing';
-import { SlashMenuList, SLASH_TRIGGER_TYPES, useSlashMenu } from './SlashMenu';
+import { isInsideQuote, SlashMenuList, SLASH_TRIGGER_TYPES, useSlashMenu } from './SlashMenu';
 import { useArticleDocument } from './useArticleDocument';
 import { BackMatterEditor } from './BackMatterEditor';
 import { ADVANCED_EDITOR_SECTION, ADVANCED_EDITOR_SECTION_NAV_OFFSET } from './advancedEditorSections';
@@ -48,7 +50,7 @@ const ensureBody = (article: Element): Element => {
 /** Debounce (ms) between a content keystroke and re-serializing/committing the whole body. */
 const COMMIT_DEBOUNCE_MS = 800;
 
-const EMPTY_BLOCK_PLACEHOLDER = "Pressione '/' para adicionar um elemento";
+const EMPTY_BLOCK_PLACEHOLDER = "Pressione '/' para adicionar um bloco";
 const SECTION_TITLE_PLACEHOLDER = 'Título da seção';
 const SECTION_CONTENT_PLACEHOLDER = 'Conteúdo da seção';
 
@@ -68,6 +70,9 @@ const getEmptyBlockPlaceholder = (editor: Editor, parentPath: Path): string | nu
   }
 
   if (parent.type === 'paragraph') {
+    if (isInsideQuote(editor, parentPath)) {
+      return null;
+    }
     const grandparentPath = Path.parent(parentPath);
     try {
       const [grandparent] = Editor.node(editor, grandparentPath);
@@ -100,7 +105,7 @@ interface AdvancedEditorProps {
 export const AdvancedEditor: React.FC<AdvancedEditorProps> = ({ xml, onChange }) => {
   const { doc, commit } = useArticleDocument(xml, onChange);
   const editor = React.useMemo(
-    () => withSections(withInlines(withHistory(withReact(createEditor())))),
+    () => withQuotes(withSections(withInlines(withHistory(withReact(createEditor()))))),
     []
   );
   const [initialValue] = React.useState<BlockElement[]>(() => deserializeBody(ensureBody(doc.documentElement)));
@@ -311,9 +316,18 @@ interface BlockElementViewProps extends RenderElementProps {
 
 /** Block types that get a draggable/"+"-button gutter on hover — top-level flow and
  * container blocks a user would want to reorder or add siblings around. Sub-parts of a
- * block (a section's heading, a quote's attribution line) and void blocks (table/figure,
- * which render their own self-contained chrome) are excluded. */
-const CHROME_TYPES = new Set(['paragraph', 'section', 'quote', 'boxed-text', 'list', 'list-item']);
+ * block (a section's heading, a quote's attribution line) are excluded. Void blocks
+ * (table/figure) are included so users can still insert a sibling below them. */
+const CHROME_TYPES = new Set([
+  'paragraph',
+  'section',
+  'quote',
+  'boxed-text',
+  'list',
+  'list-item',
+  'table',
+  'figure',
+]);
 
 const BlockElementView: React.FC<BlockElementViewProps> = (props) => {
   const inline = renderInlineElement(props);
@@ -322,7 +336,17 @@ const BlockElementView: React.FC<BlockElementViewProps> = (props) => {
   }
 
   const { attributes, children, element, editor, xrefTargets } = props;
-  const withChrome = CHROME_TYPES.has(element.type);
+  // Quotes only hold plain paragraphs — no "+" gutter on those inner paragraphs
+  // (the quote block itself still has chrome to add siblings below the citation).
+  let path: Path | null = null;
+  try {
+    path = ReactEditor.findPath(editor, element);
+  } catch {
+    path = null;
+  }
+  const withChrome =
+    CHROME_TYPES.has(element.type) &&
+    !(element.type === 'paragraph' && path !== null && isInsideQuote(editor, path));
   // Chrome types get their tag rendered *without* Slate's `attributes` — `BlockChrome`
   // takes ownership of `attributes` on its own outer wrapper instead (see below).
   const chromeAttributes = withChrome ? EMPTY_ATTRIBUTES : attributes;
@@ -364,14 +388,24 @@ const BlockElementView: React.FC<BlockElementViewProps> = (props) => {
 
       case 'table':
         return (
-          <TableBlockView attributes={attributes} element={element} editor={editor}>
+          <TableBlockView
+            attributes={chromeAttributes}
+            element={element}
+            editor={editor}
+            xrefTargets={xrefTargets}
+          >
             {children}
           </TableBlockView>
         );
 
       case 'figure':
         return (
-          <FigureBlockView attributes={attributes} element={element} editor={editor}>
+          <FigureBlockView
+            attributes={chromeAttributes}
+            element={element}
+            editor={editor}
+            xrefTargets={xrefTargets}
+          >
             {children}
           </FigureBlockView>
         );
@@ -463,8 +497,17 @@ const BlockChrome: React.FC<{
     ReactEditor.focus(editor);
   };
 
+  // Table/figure keep their own non-editable chrome; when BlockChrome owns Slate's
+  // `attributes`, the outer row must stay non-editable so the caret cannot land in it.
+  const isVoidLike = element.type === 'table' || element.type === 'figure';
+
   return (
-    <BlockRow {...attributes} onDragOver={handleDragOver} onDrop={handleDrop}>
+    <BlockRow
+      {...attributes}
+      contentEditable={isVoidLike ? false : undefined}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       <BlockGutter contentEditable={false}>
         <GutterButton type="button" title="Adicionar bloco abaixo" onMouseDown={handleAddBelow}>
           +
@@ -535,26 +578,45 @@ const VoidChildren: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   <span style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden' }}>{children}</span>
 );
 
+const VoidInlineField: React.FC<{
+  initialInline: InlineNode[];
+  onInlineChange: (nodes: InlineNode[]) => void;
+  placeholder?: string;
+  xrefTargets: Array<{ id: string; label: string }>;
+  fieldKey: string;
+}> = ({ initialInline, onInlineChange, placeholder, xrefTargets, fieldKey }) => (
+  <InlineRichEditor
+    key={fieldKey}
+    initialInline={initialInline}
+    onInlineChange={onInlineChange}
+    placeholder={placeholder}
+    xrefTargets={xrefTargets}
+    toolbar="floating"
+    compact
+  />
+);
+
 const TableBlockView: React.FC<{
   attributes: RenderElementProps['attributes'];
   element: TableElement;
   editor: Editor;
+  xrefTargets: Array<{ id: string; label: string }>;
   children: React.ReactNode;
-}> = ({ attributes, element, editor, children }) => {
+}> = ({ attributes, element, editor, xrefTargets, children }) => {
   const headerRowCount = getHeaderRowCount(element.tableTemplate);
   const hasHeader = headerRowCount > 0;
   const colCount = element.rows.reduce((max, row) => Math.max(max, row.length), 1);
   const canRemoveRow = element.rows.length > 1;
   const canRemoveColumn = colCount > 1;
 
-  const setRow = (rowIndex: number, cellIndex: number, text: string) => {
+  const setCell = (rowIndex: number, cellIndex: number, inline: InlineNode[]) => {
     const rows = element.rows.map((row, r) =>
-      r === rowIndex ? row.map((cell, c) => (c === cellIndex ? text : cell)) : row
+      r === rowIndex ? row.map((cell, c) => (c === cellIndex ? inline : cell)) : row
     );
     updateVoidElement(editor, element, { rows });
   };
 
-  const renderRow = (row: string[], rowIndex: number, cellTag: 'th' | 'td') => {
+  const renderRow = (row: InlineNode[][], rowIndex: number, cellTag: 'th' | 'td') => {
     const CellTag = cellTag;
 
     return (
@@ -563,7 +625,13 @@ const TableBlockView: React.FC<{
         {row.map((cell, c) => (
           // eslint-disable-next-line react/no-array-index-key
           <CellTag key={c}>
-            <FieldInput value={cell} onChange={(e) => setRow(rowIndex, c, e.target.value)} />
+            <VoidInlineField
+              fieldKey={`${element.tableId || 'table'}-r${rowIndex}-c${c}`}
+              initialInline={cell}
+              placeholder="Célula"
+              xrefTargets={xrefTargets}
+              onInlineChange={(inline) => setCell(rowIndex, c, inline)}
+            />
           </CellTag>
         ))}
       </tr>
@@ -653,10 +721,12 @@ const TableBlockView: React.FC<{
             {element.rows.slice(headerRowCount).map((row, r) => renderRow(row, headerRowCount + r, 'td'))}
           </tbody>
         </table>
-        <FieldInput
+        <VoidInlineField
+          fieldKey={`${element.tableId || 'table'}-attrib`}
+          initialInline={element.attrib}
           placeholder="Nota da tabela"
-          value={element.attribText}
-          onChange={(e) => updateVoidElement(editor, element, { attribText: e.target.value })}
+          xrefTargets={xrefTargets}
+          onInlineChange={(attrib) => updateVoidElement(editor, element, { attrib })}
         />
       </TableWrapper>
     </div>
@@ -667,8 +737,9 @@ const FigureBlockView: React.FC<{
   attributes: RenderElementProps['attributes'];
   element: FigureElement;
   editor: Editor;
+  xrefTargets: Array<{ id: string; label: string }>;
   children: React.ReactNode;
-}> = ({ attributes, element, editor, children }) => (
+}> = ({ attributes, element, editor, xrefTargets, children }) => (
   <div {...attributes} contentEditable={false}>
     <VoidChildren>{children}</VoidChildren>
     <FigureWrapper>
@@ -693,17 +764,18 @@ const FigureBlockView: React.FC<{
           {element.captionTitle}
         </CaptionHeading>
       )}
-      {/* Image assets aren't hosted yet, so this intentionally renders broken (same as the read-only renderer). */}
       {element.href && <img src={element.href} alt={element.label || 'Figura'} />}
       <FieldInput
         placeholder="Arquivo de imagem (nome/URL)"
         value={element.href}
         onChange={(e) => updateVoidElement(editor, element, { href: e.target.value })}
       />
-      <FieldInput
+      <VoidInlineField
+        fieldKey={`${element.figureId || 'figure'}-attrib`}
+        initialInline={element.attrib}
         placeholder="Nota da figura"
-        value={element.attribText}
-        onChange={(e) => updateVoidElement(editor, element, { attribText: e.target.value })}
+        xrefTargets={xrefTargets}
+        onInlineChange={(attrib) => updateVoidElement(editor, element, { attrib })}
       />
     </FigureWrapper>
   </div>

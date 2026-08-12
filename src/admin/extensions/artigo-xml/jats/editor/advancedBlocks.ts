@@ -22,6 +22,9 @@ import {
   XrefElement,
 } from './inlineModel';
 
+/** Empty inline run used for blank table cells / attrib notes. */
+export const createEmptyInline = (): InlineNode[] => [{ text: '' }];
+
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 
 const BLOCK_TAGS = new Set(['p', 'sec', 'disp-quote', 'table-wrap', 'fig', 'list', 'boxed-text']);
@@ -73,10 +76,9 @@ export interface QuoteAttribElement {
 
 export interface QuoteElement {
   type: 'quote';
-  // JATS `<disp-quote>` may hold arbitrary block content (not just paragraphs), and the
-  // slash menu can insert any block kind wherever it's triggered — so this must accept
-  // any `BlockElement`, not just `ParagraphElement`, or those blocks would be silently
-  // dropped on serialize.
+  // Editor UX restricts quotes to plain paragraphs (+ optional attribution), but the
+  // type still accepts `BlockElement` so older/imported JATS with nested blocks
+  // round-trips without being silently dropped on serialize.
   children: (BlockElement | QuoteAttribElement)[];
 }
 
@@ -85,11 +87,13 @@ export interface TableElement {
   tableId: string;
   label: string;
   captionTitle: string;
-  attribText: string;
+  /** Table note (`table-wrap-foot` / `attrib`) — rich inline content. */
+  attrib: InlineNode[];
   /** Snapshot of the original `<table>` (preserves thead/tbody, rowspan/colspan…); only
-   * cell text is user-editable here and gets patched back into a clone of this on save. */
+   * cell content is user-editable here and gets patched back into a clone of this on save. */
   tableTemplate: Element;
-  rows: string[][];
+  /** Cell contents as rich inline runs (row → column → inline nodes). */
+  rows: InlineNode[][][];
   children: [FormattedText];
 }
 
@@ -99,7 +103,8 @@ export interface FigureElement {
   label: string;
   captionTitle: string;
   href: string;
-  attribText: string;
+  /** Figure note (`attrib`) — rich inline content. */
+  attrib: InlineNode[];
   children: [FormattedText];
 }
 
@@ -166,7 +171,7 @@ export const getHeaderRowCount = (table: Element): number => {
   return thead ? thead.querySelectorAll(':scope > tr').length : 0;
 };
 
-const rebuildTableTemplate = (rows: string[][], headerRowCount: number, base?: Element): Element => {
+const rebuildTableTemplate = (rows: InlineNode[][][], headerRowCount: number, base?: Element): Element => {
   const doc = base?.ownerDocument ?? new DOMParser().parseFromString('<table/>', 'application/xml');
   const table = doc.createElement('table');
   if (base) {
@@ -204,13 +209,13 @@ const rebuildTableTemplate = (rows: string[][], headerRowCount: number, base?: E
 
 export const addTableRow = (element: TableElement): Pick<TableElement, 'rows' | 'tableTemplate'> => {
   const colCount = element.rows.reduce((max, row) => Math.max(max, row.length), 1);
-  const rows = [...element.rows, Array<string>(colCount).fill('')];
+  const rows = [...element.rows, Array.from({ length: colCount }, () => createEmptyInline())];
   const headerRowCount = getHeaderRowCount(element.tableTemplate);
   return { rows, tableTemplate: rebuildTableTemplate(rows, headerRowCount, element.tableTemplate) };
 };
 
 export const addTableColumn = (element: TableElement): Pick<TableElement, 'rows' | 'tableTemplate'> => {
-  const rows = element.rows.map((row) => [...row, '']);
+  const rows = element.rows.map((row) => [...row, createEmptyInline()]);
   const headerRowCount = getHeaderRowCount(element.tableTemplate);
   return { rows, tableTemplate: rebuildTableTemplate(rows, headerRowCount, element.tableTemplate) };
 };
@@ -268,9 +273,9 @@ export const createEmptyBlock = (kind: BlockKind, depth: number): BlockElement =
         tableId: '',
         label: '',
         captionTitle: '',
-        attribText: '',
+        attrib: createEmptyInline(),
         tableTemplate: createDefaultTableTemplate(),
-        rows: [['']],
+        rows: [[createEmptyInline()]],
         children: [{ text: '' }],
       };
     case 'figure':
@@ -280,7 +285,7 @@ export const createEmptyBlock = (kind: BlockKind, depth: number): BlockElement =
         label: '',
         captionTitle: '',
         href: '',
-        attribText: '',
+        attrib: createEmptyInline(),
         children: [{ text: '' }],
       };
     case 'boxed-text':
@@ -364,16 +369,18 @@ const deserializeTable = (el: Element): TableElement => {
   const foot = directChild(el, 'table-wrap-foot');
   const attribEl = foot ? directChild(foot, 'attrib') : null;
   const rowEls = table ? Array.from(table.querySelectorAll('tr')) : [];
-  const rows = rowEls.map((row) => Array.from(row.children).map((cell) => cell.textContent || ''));
+  const rows = rowEls.map((row) =>
+    Array.from(row.children).map((cell) => deserializeInline(cell.childNodes))
+  );
 
   return {
     type: 'table',
     tableId: el.getAttribute('id') || '',
     label: labelEl?.textContent || '',
     captionTitle: captionTitleEl?.textContent || '',
-    attribText: attribEl?.textContent || '',
+    attrib: attribEl ? deserializeInline(attribEl.childNodes) : createEmptyInline(),
     tableTemplate: (table ?? createDefaultTableTemplate()).cloneNode(true) as Element,
-    rows: rows.length > 0 ? rows : [['']],
+    rows: rows.length > 0 ? rows : [[createEmptyInline()]],
     children: [{ text: '' }],
   };
 };
@@ -394,7 +401,7 @@ const deserializeFigure = (el: Element): FigureElement => {
     label: labelEl?.textContent || '',
     captionTitle: captionTitleEl?.textContent || '',
     href,
-    attribText: attribEl?.textContent || '',
+    attrib: attribEl ? deserializeInline(attribEl.childNodes) : createEmptyInline(),
     children: [{ text: '' }],
   };
 };
@@ -510,15 +517,16 @@ const serializeTable = (node: TableElement, doc: Document): Element => {
   const table = doc.importNode(node.tableTemplate, true) as Element;
   Array.from(table.querySelectorAll('tr')).forEach((row, r) => {
     Array.from(row.children).forEach((cell, c) => {
-      cell.textContent = node.rows[r]?.[c] ?? cell.textContent ?? '';
+      const inline = node.rows[r]?.[c] ?? createEmptyInline();
+      cell.replaceChildren(...serializeInline(inline, doc));
     });
   });
   wrap.appendChild(table);
 
-  if (node.attribText.trim()) {
+  if (!isInlineEmpty(node.attrib)) {
     const foot = doc.createElement('table-wrap-foot');
     const attrib = doc.createElement('attrib');
-    attrib.textContent = node.attribText;
+    serializeInline(node.attrib, doc).forEach((child) => attrib.appendChild(child));
     foot.appendChild(attrib);
     wrap.appendChild(foot);
   }
@@ -548,9 +556,9 @@ const serializeFigure = (node: FigureElement, doc: Document): Element => {
     graphic.setAttributeNS(XLINK_NS, 'xlink:href', node.href);
   }
   el.appendChild(graphic);
-  if (node.attribText.trim()) {
+  if (!isInlineEmpty(node.attrib)) {
     const attrib = doc.createElement('attrib');
-    attrib.textContent = node.attribText;
+    serializeInline(node.attrib, doc).forEach((child) => attrib.appendChild(child));
     el.appendChild(attrib);
   }
   return el;

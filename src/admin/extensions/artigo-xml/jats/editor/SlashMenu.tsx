@@ -1,9 +1,9 @@
 /**
  * "/" command palette: typing `/` as the only content of an otherwise-empty paragraph
- * (or quote attribution line) opens a dropdown of block types; picking one replaces
- * that paragraph with a fresh block of the chosen kind. `useSlashMenu` owns detection,
- * filtering and keyboard navigation; `SlashMenuList` is the (purely presentational)
- * dropdown itself.
+ * opens a dropdown of block types; picking one replaces that paragraph with a fresh
+ * block of the chosen kind. Disabled inside quotes (`disp-quote` may only hold plain
+ * paragraphs). `useSlashMenu` owns detection, filtering and keyboard navigation;
+ * `SlashMenuList` is the (purely presentational) dropdown itself.
  */
 import * as React from 'react';
 import { Editor, Element as SlateElement, Node as SlateNode, Path, Range, Transforms } from 'slate';
@@ -13,9 +13,22 @@ import styled from 'styled-components';
 import { BLOCK_KIND_LABELS, BlockKind, createEmptyBlock, SectionElement } from './advancedBlocks';
 import { useArtigoXmlViewportScrollLock } from './useArtigoXmlViewportScrollLock';
 
-const SLASH_TRIGGER_TYPES = new Set(['paragraph', 'quote-attrib']);
+const SLASH_TRIGGER_TYPES = new Set(['paragraph']);
 
 export { SLASH_TRIGGER_TYPES };
+
+/** True when `path` is a direct child of a `quote` (slash menu / block chrome stay off there). */
+export const isInsideQuote = (editor: Editor, path: Path): boolean => {
+  if (path.length === 0) {
+    return false;
+  }
+  try {
+    const [parent] = Editor.node(editor, Path.parent(path));
+    return SlateElement.isElement(parent) && parent.type === 'quote';
+  } catch {
+    return false;
+  }
+};
 
 const BLOCK_KIND_ORDER: BlockKind[] = [
   //'paragraph',
@@ -52,6 +65,10 @@ const detectSlashTarget = (editor: Editor): SlashTarget | null => {
     return null;
   }
   if (!SlateElement.isElement(parentNode) || !SLASH_TRIGGER_TYPES.has(parentNode.type)) {
+    return null;
+  }
+  // Quotes only accept plain paragraphs — never open the block palette inside one.
+  if (isInsideQuote(editor, parentPath)) {
     return null;
   }
 

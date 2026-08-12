@@ -270,7 +270,6 @@ const Figure: React.FC<{ el: Element; keyPrefix: string }> = ({ el, keyPrefix })
           {captionTitle}
         </CaptionHeading>
       )}
-      {/* Image assets aren't hosted yet, so this intentionally renders broken. */}
       {href && <img src={href} alt={label?.textContent || 'Figura'} />}
       {attrib && <AttribText>{renderInlineNodes(attrib.childNodes, `${keyPrefix}-attrib`)}</AttribText>}
     </FigureWrapper>

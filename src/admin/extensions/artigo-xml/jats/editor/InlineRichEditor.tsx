@@ -5,8 +5,10 @@ import { Editable, RenderElementProps, Slate, withReact, useSlate } from 'slate-
 import styled from 'styled-components';
 
 import { ParagraphElement } from './advancedBlocks';
+import { FloatingToolbar } from './FloatingToolbar';
 import {
   deserializeInline,
+  InlineNode,
   insertLink,
   insertXref,
   isMarkActive,
@@ -91,19 +93,28 @@ const renderElement = (props: RenderElementProps) =>
   renderInlineElement(props) ?? <EditorParagraph {...props.attributes}>{props.children}</EditorParagraph>;
 
 interface InlineRichEditorProps {
-  /** DOM used to create the serialized output nodes; typically the shared article `Document`. */
-  doc: Document;
+  /** DOM used to create the serialized output nodes; typically the shared article `Document`.
+   * Required when using `onChange` (DOM serialization); optional when only `onInlineChange` is used. */
+  doc?: Document;
   /** Seeds the editor's initial content. Only read once per mount — give this component a
    * `key` tied to the target element/field when it needs to reset to a different value. */
-  initialNodes: ArrayLike<ChildNode>;
-  /** Called with fresh JATS DOM nodes on every content change. */
-  onChange: (nodes: Node[]) => void;
+  initialNodes?: ArrayLike<ChildNode>;
+  /** Alternative seed as Slate inline nodes (preferred when the parent already holds `InlineNode[]`). */
+  initialInline?: InlineNode[];
+  /** Called with fresh JATS DOM nodes on every content change. Requires `doc`. */
+  onChange?: (nodes: Node[]) => void;
+  /** Called with Slate inline nodes on every content change. */
+  onInlineChange?: (nodes: InlineNode[]) => void;
   onBlur?: () => void;
   placeholder?: string;
   /** Font size for the editable area; defaults to compact form-field sizing. */
   fontSize?: string;
   /** Enables the cross-reference picker, pointing at the article's footnotes/references. */
   xrefTargets?: Array<{ id: string; label: string }>;
+  /** `fixed` = always-visible toolbar above the field (default); `floating` = selection popover. */
+  toolbar?: 'fixed' | 'floating';
+  /** Compact single-line look for table cells / short notes. */
+  compact?: boolean;
 }
 
 /**
@@ -117,15 +128,22 @@ interface InlineRichEditorProps {
 export const InlineRichEditor: React.FC<InlineRichEditorProps> = ({
   doc,
   initialNodes,
+  initialInline,
   onChange,
+  onInlineChange,
   onBlur,
   placeholder,
   fontSize,
   xrefTargets,
+  toolbar = 'fixed',
+  compact = false,
 }) => {
   const editor = React.useMemo(() => withInlines(withHistory(withReact(createEditor()))), []);
   const [initialValue] = React.useState<ParagraphElement[]>(() => [
-    { type: 'paragraph', children: deserializeInline(initialNodes) },
+    {
+      type: 'paragraph',
+      children: initialInline ?? deserializeInline(initialNodes ?? []),
+    },
   ]);
 
   const handleChange = (newValue: Descendant[]) => {
@@ -134,23 +152,30 @@ export const InlineRichEditor: React.FC<InlineRichEditorProps> = ({
       return;
     }
     const [paragraph] = newValue as ParagraphElement[];
-    onChange(serializeInline(paragraph.children, doc));
+    onInlineChange?.(paragraph.children);
+    if (onChange && doc) {
+      onChange(serializeInline(paragraph.children, doc));
+    }
   };
 
   return (
-    <EditorWrapper>
+    <EditorWrapper $compact={compact}>
       <Slate editor={editor} initialValue={initialValue} onChange={handleChange}>
-        <Toolbar>
-          <MarkButton mark="bold" label={<strong>B</strong>} title="Negrito" />
-          <MarkButton mark="italic" label={<em>I</em>} title="Itálico" />
-          <MarkButton mark="underline" label={<u>S</u>} title="Sublinhado" />
-          <MarkButton mark="sup" label="x²" title="Sobrescrito" />
-          <MarkButton mark="sub" label="x₂" title="Subscrito" />
-          <LinkButton />
-          {xrefTargets && xrefTargets.length > 0 && <XrefSelect targets={xrefTargets} />}
-        </Toolbar>
+        {toolbar === 'fixed' && (
+          <Toolbar>
+            <MarkButton mark="bold" label={<strong>B</strong>} title="Negrito" />
+            <MarkButton mark="italic" label={<em>I</em>} title="Itálico" />
+            <MarkButton mark="underline" label={<u>S</u>} title="Sublinhado" />
+            <MarkButton mark="sup" label="x²" title="Sobrescrito" />
+            <MarkButton mark="sub" label="x₂" title="Subscrito" />
+            <LinkButton />
+            {xrefTargets && xrefTargets.length > 0 && <XrefSelect targets={xrefTargets} />}
+          </Toolbar>
+        )}
+        {toolbar === 'floating' && <FloatingToolbar xrefTargets={xrefTargets ?? []} />}
         <EditableArea
           $fontSize={fontSize}
+          $compact={compact}
           renderElement={renderElement}
           renderLeaf={renderInlineLeaf}
           onBlur={onBlur}
@@ -161,11 +186,12 @@ export const InlineRichEditor: React.FC<InlineRichEditorProps> = ({
   );
 };
 
-const EditorWrapper = styled.div`
+const EditorWrapper = styled.div<{ $compact?: boolean }>`
   width: 100%;
   border: 1px solid #dcdce4;
   border-radius: 4px;
   background: #fff;
+  margin-bottom: ${({ $compact }) => ($compact ? '4px' : '0')};
 
   &:focus-within {
     border-color: #4945ff;
@@ -206,10 +232,11 @@ const ToolbarSelect = styled.select`
   color: #32324d;
 `;
 
-const EditableArea = styled(Editable)<{ $fontSize?: string }>`
-  padding: ${({ $fontSize }) => ($fontSize ? '10px 12px' : '8px 10px')};
-  min-height: 2.5em;
-  font-size: ${({ $fontSize }) => $fontSize ?? '0.875rem'};
+const EditableArea = styled(Editable)<{ $fontSize?: string; $compact?: boolean }>`
+  padding: ${({ $compact, $fontSize }) =>
+    $compact ? '4px 6px' : $fontSize ? '10px 12px' : '8px 10px'};
+  min-height: ${({ $compact }) => ($compact ? '1.8em' : '2.5em')};
+  font-size: ${({ $fontSize, $compact }) => $fontSize ?? ($compact ? '0.9em' : '0.875rem')};
   line-height: 1.5;
   outline: none;
 

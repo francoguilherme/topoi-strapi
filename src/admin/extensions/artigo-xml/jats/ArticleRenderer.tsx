@@ -65,9 +65,8 @@ interface ArticleRendererProps {
 /**
  * Renders a JATS/SciELO article XML as a readable, paper-like document:
  * title, authors, affiliations, abstracts, body sections, footnotes and
- * references. Figures are rendered with a plain `<img>` pointing at the
- * original filename, which is expected to show as a broken image since no
- * image assets are hosted yet.
+ * references. Figures are rendered with a plain `<img>` using the
+ * `xlink:href` from `<graphic>` (absolute URLs require CSP to allow them).
  */
 export const ArticleRenderer: React.FC<ArticleRendererProps> = ({ xml, onParseError }) => {
   const parsed = React.useMemo((): { doc: Document | null; error: Error | null } => {
