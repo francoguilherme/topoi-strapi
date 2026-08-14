@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Flex } from '@strapi/design-system';
 
 import { BodyFields } from './BodyFields';
-import { listXrefTargets } from './domMutations';
+import { listMediaXrefTargets, listXrefTargets } from './domMutations';
 import { MetadataFields } from './MetadataFields';
 import { NotesFields } from './NotesFields';
 import { ReferencesFields } from './ReferencesFields';
@@ -24,7 +24,7 @@ export const StructuredEditor: React.FC<StructuredEditorProps> = ({ xml, onChang
   // `doc` is mutated in place (its identity never changes), so this must be recomputed on
   // every render rather than memoized on `doc` — otherwise newly added/removed notes and
   // references would never show up in (or disappear from) the cross-reference picker.
-  const xrefTargets = listXrefTargets(doc);
+  const xrefTargets = [...listXrefTargets(doc), ...listMediaXrefTargets(doc)];
 
   return (
     <Flex direction="column" alignItems="stretch" gap={4}>

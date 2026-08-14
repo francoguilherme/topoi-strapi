@@ -11,7 +11,10 @@ import { ReactEditor, useSlate } from 'slate-react';
 import styled from 'styled-components';
 
 import { ARTIGO_XML_VIEWPORT_SELECTOR } from '../../constants';
-import { insertLink, insertXref, isMarkActive, MarkKey, toggleMark } from './inlineModel';
+import { XrefTarget } from './domMutations';
+import { useLinkDialog } from './LinkDialog';
+import { isMarkActive, MarkKey, toggleMark } from './inlineModel';
+import { XrefTargetSelect } from './xrefTargetSelect';
 
 const getViewportContainer = (editor: Editor): HTMLElement | null => {
   try {
@@ -24,11 +27,12 @@ const getViewportContainer = (editor: Editor): HTMLElement | null => {
 };
 
 interface FloatingToolbarProps {
-  xrefTargets: Array<{ id: string; label: string }>;
+  xrefTargets: XrefTarget[];
 }
 
 export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ xrefTargets }) => {
   const editor = useSlate();
+  const { openInsertDialog } = useLinkDialog();
   const ref = React.useRef<HTMLDivElement | null>(null);
   const { selection } = editor;
 
@@ -116,37 +120,12 @@ export const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ xrefTargets })
         title="Inserir link"
         onMouseDown={(event) => {
           event.preventDefault();
-          const href = window.prompt('URL do link:');
-          if (href) {
-            insertLink(editor, href);
-          }
+          openInsertDialog();
         }}
       >
         🔗
       </ToolbarButton>
-      {xrefTargets.length > 0 && (
-        <ToolbarSelect
-          defaultValue=""
-          title="Inserir referência cruzada"
-          onMouseDown={(event) => event.stopPropagation()}
-          onChange={(event) => {
-            const target = xrefTargets.find((t) => t.id === event.target.value);
-            event.target.value = '';
-            if (target) {
-              insertXref(editor, target.id, target.label);
-            }
-          }}
-        >
-          <option value="" hidden>
-            + Ref. cruzada
-          </option>
-          {xrefTargets.map((target) => (
-            <option key={target.id} value={target.id}>
-              {target.label}
-            </option>
-          ))}
-        </ToolbarSelect>
-      )}
+      <XrefTargetSelect targets={xrefTargets} Select={ToolbarSelect} />
     </Popover>
   );
 

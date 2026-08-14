@@ -8,23 +8,31 @@ import {
   addTableColumn,
   addTableRow,
   BlockElement,
+  BlockKind,
+  collectMediaXrefTargets,
   createEmptyParagraph,
   deserializeBody,
+  ensureMediaBlockIds,
   FigureElement,
   getHeaderRowCount,
+  isInlineEmpty,
+  nextMediaBlockId,
   removeTableColumn,
   removeTableRow,
   serializeBody,
   setTableHeaderRow,
+  syncMediaBlockIdsToEditor,
   TableElement,
 } from './advancedBlocks';
 import { directChild, ensureChild, listXrefTargets, XrefTarget } from './domMutations';
 import { FloatingToolbar } from './FloatingToolbar';
+import { LinkDialogProvider } from './LinkDialog';
 import { InlineRichEditor } from './InlineRichEditor';
-import { InlineNode, renderInlineElement, renderInlineLeaf, withInlines } from './inlineModel';
+import { InlineNode, InlineContentPreview, renderInlineElement, renderInlineLeaf, withInlines } from './inlineModel';
 import { withQuotes } from './quoteEditing';
 import { handleSectionTabKey, withSections } from './sectionEditing';
 import { isInsideQuote, SlashMenuList, SLASH_TRIGGER_TYPES, useSlashMenu } from './SlashMenu';
+import { isInsideVerseGroup, withVerses } from './verseEditing';
 import { useArticleDocument } from './useArticleDocument';
 import { BackMatterEditor } from './BackMatterEditor';
 import { ADVANCED_EDITOR_SECTION, ADVANCED_EDITOR_SECTION_NAV_OFFSET } from './advancedEditorSections';
@@ -36,6 +44,8 @@ import {
   FigureWrapper,
   SectionHeading,
   TableWrapper,
+  VerseGroup,
+  VerseLine,
 } from '../styles';
 
 const ensureBody = (article: Element): Element => {
@@ -53,6 +63,7 @@ const COMMIT_DEBOUNCE_MS = 800;
 const EMPTY_BLOCK_PLACEHOLDER = "Pressione '/' para adicionar um bloco";
 const SECTION_TITLE_PLACEHOLDER = 'Título da seção';
 const SECTION_CONTENT_PLACEHOLDER = 'Conteúdo da seção';
+const VERSE_LINE_PLACEHOLDER = 'Verso';
 
 const getEmptyBlockPlaceholder = (editor: Editor, parentPath: Path): string | null => {
   let parent;
@@ -84,6 +95,10 @@ const getEmptyBlockPlaceholder = (editor: Editor, parentPath: Path): string | nu
     }
   }
 
+  if (parent.type === 'verse-line') {
+    return VERSE_LINE_PLACEHOLDER;
+  }
+
   if (SLASH_TRIGGER_TYPES.has(parent.type)) {
     return EMPTY_BLOCK_PLACEHOLDER;
   }
@@ -105,22 +120,23 @@ interface AdvancedEditorProps {
 export const AdvancedEditor: React.FC<AdvancedEditorProps> = ({ xml, onChange }) => {
   const { doc, commit } = useArticleDocument(xml, onChange);
   const editor = React.useMemo(
-    () => withQuotes(withSections(withInlines(withHistory(withReact(createEditor()))))),
+    () => withVerses(withQuotes(withSections(withInlines(withHistory(withReact(createEditor())))))),
     []
   );
   const [initialValue] = React.useState<BlockElement[]>(() => deserializeBody(ensureBody(doc.documentElement)));
-  // Recomputed every render — `doc` is mutated in place when back matter changes.
-  const xrefTargets = listXrefTargets(doc);
+  const backMatterXrefTargets = listXrefTargets(doc);
 
   const commitTimeoutRef = React.useRef<number>();
 
   const flush = React.useCallback(
     (value: BlockElement[]) => {
+      const withIds = ensureMediaBlockIds(value, doc);
+      syncMediaBlockIdsToEditor(editor, value, withIds);
       const body = ensureBody(doc.documentElement);
-      body.replaceChildren(...serializeBody(value, doc));
+      body.replaceChildren(...serializeBody(withIds, doc));
       commit();
     },
-    [doc, commit]
+    [doc, commit, editor]
   );
 
   const scheduleCommit = React.useCallback(
@@ -158,20 +174,15 @@ export const AdvancedEditor: React.FC<AdvancedEditorProps> = ({ xml, onChange })
     flush(editor.children as BlockElement[]);
   };
 
-  const renderElement = React.useCallback(
-    (props: RenderElementProps) => <BlockElementView {...props} editor={editor} xrefTargets={xrefTargets} />,
-    [editor, xrefTargets]
-  );
-
   return (
     <EditorShell>
       <ArticleContainer>
         <BodySection data-advanced-editor-section={ADVANCED_EDITOR_SECTION.body}>
           <Slate editor={editor} initialValue={initialValue} onChange={handleChange}>
-            <EditorBody renderElement={renderElement} onBlur={handleBlur} xrefTargets={xrefTargets} />
+            <EditorBody doc={doc} editor={editor} onBlur={handleBlur} backMatterXrefTargets={backMatterXrefTargets} />
           </Slate>
         </BodySection>
-        <BackMatterEditor doc={doc} commit={commit} xrefTargets={xrefTargets} />
+        <BackMatterEditor doc={doc} commit={commit} xrefTargets={backMatterXrefTargets} />
       </ArticleContainer>
     </EditorShell>
   );
@@ -183,12 +194,38 @@ export const AdvancedEditor: React.FC<AdvancedEditorProps> = ({ xml, onChange })
  * the slash menu and floating toolbar, both derived live from the current cursor/selection.
  */
 const EditorBody: React.FC<{
-  renderElement: (props: RenderElementProps) => React.ReactElement;
+  doc: Document;
+  editor: Editor;
   onBlur: () => void;
-  xrefTargets: XrefTarget[];
-}> = ({ renderElement, onBlur, xrefTargets }) => {
-  const editor = useSlate();
-  const slashMenu = useSlashMenu(editor);
+  backMatterXrefTargets: XrefTarget[];
+}> = ({ doc, editor, onBlur, backMatterXrefTargets }) => {
+  const slateEditor = useSlate();
+  const slashMenu = useSlashMenu(
+    slateEditor,
+    React.useCallback(
+      (kind: BlockKind, block: BlockElement) => {
+        if (kind === 'figure' && block.type === 'figure') {
+          return { ...block, figureId: nextMediaBlockId(doc, 'figure') };
+        }
+        if (kind === 'table' && block.type === 'table') {
+          return { ...block, tableId: nextMediaBlockId(doc, 'table') };
+        }
+        return block;
+      },
+      [doc]
+    )
+  );
+
+  const bodyBlocks = slateEditor.children as BlockElement[];
+  const xrefTargets = React.useMemo(
+    () => [...backMatterXrefTargets, ...collectMediaXrefTargets(bodyBlocks)],
+    [backMatterXrefTargets, bodyBlocks]
+  );
+
+  const renderElement = React.useCallback(
+    (props: RenderElementProps) => <BlockElementView {...props} editor={editor} xrefTargets={xrefTargets} />,
+    [editor, xrefTargets]
+  );
 
   const decorate = React.useCallback(
     ([node, path]: NodeEntry) => {
@@ -199,40 +236,40 @@ const EditorBody: React.FC<{
       const parentPath = Path.parent(path);
       let parent;
       try {
-        [parent] = Editor.node(editor, parentPath);
+        [parent] = Editor.node(slateEditor, parentPath);
       } catch {
         return [];
       }
 
-      if (!SlateElement.isElement(parent) || Editor.string(editor, parentPath).trim() !== '') {
+      if (!SlateElement.isElement(parent) || Editor.string(slateEditor, parentPath).trim() !== '') {
         return [];
       }
 
       // Section titles always show their placeholder while empty, even without focus.
       if (parent.type === 'heading') {
-        const at = Editor.start(editor, parentPath);
+        const at = Editor.start(slateEditor, parentPath);
         return [{ anchor: at, focus: at, blockPlaceholder: SECTION_TITLE_PLACEHOLDER }];
       }
 
-      const { selection } = editor;
+      const { selection } = slateEditor;
       if (
         !selection ||
         !Range.isCollapsed(selection) ||
-        !ReactEditor.isFocused(editor) ||
+        !ReactEditor.isFocused(slateEditor) ||
         !Range.includes(selection, parentPath)
       ) {
         return [];
       }
 
-      const placeholder = getEmptyBlockPlaceholder(editor, parentPath);
+      const placeholder = getEmptyBlockPlaceholder(slateEditor, parentPath);
       if (!placeholder) {
         return [];
       }
 
-      const at = Editor.start(editor, parentPath);
+      const at = Editor.start(slateEditor, parentPath);
       return [{ anchor: at, focus: at, blockPlaceholder: placeholder }];
     },
-    [editor]
+    [slateEditor]
   );
 
   const renderLeaf = React.useCallback((props: RenderLeafProps) => {
@@ -254,7 +291,7 @@ const EditorBody: React.FC<{
   }, []);
 
   return (
-    <>
+    <LinkDialogProvider>
       <Editable
         decorate={decorate}
         renderElement={renderElement}
@@ -264,12 +301,12 @@ const EditorBody: React.FC<{
           if (slashMenu.handleKeyDown(event)) {
             return;
           }
-          handleSectionTabKey(editor, event);
+          handleSectionTabKey(slateEditor, event);
         }}
       />
-      <SlashMenuList controller={slashMenu} editor={editor} />
+      <SlashMenuList controller={slashMenu} editor={slateEditor} />
       <FloatingToolbar xrefTargets={xrefTargets} />
-    </>
+    </LinkDialogProvider>
   );
 };
 
@@ -311,7 +348,7 @@ const SectionBlock = styled.section`
 
 interface BlockElementViewProps extends RenderElementProps {
   editor: Editor;
-  xrefTargets: Array<{ id: string; label: string }>;
+  xrefTargets: XrefTarget[];
 }
 
 /** Block types that get a draggable/"+"-button gutter on hover — top-level flow and
@@ -322,6 +359,7 @@ const CHROME_TYPES = new Set([
   'paragraph',
   'section',
   'quote',
+  'verse-group',
   'boxed-text',
   'list',
   'list-item',
@@ -346,7 +384,8 @@ const BlockElementView: React.FC<BlockElementViewProps> = (props) => {
   }
   const withChrome =
     CHROME_TYPES.has(element.type) &&
-    !(element.type === 'paragraph' && path !== null && isInsideQuote(editor, path));
+    !(element.type === 'paragraph' && path !== null && isInsideQuote(editor, path)) &&
+    !(element.type === 'verse-line' && path !== null && isInsideVerseGroup(editor, path));
   // Chrome types get their tag rendered *without* Slate's `attributes` — `BlockChrome`
   // takes ownership of `attributes` on its own outer wrapper instead (see below).
   const chromeAttributes = withChrome ? EMPTY_ATTRIBUTES : attributes;
@@ -379,6 +418,16 @@ const BlockElementView: React.FC<BlockElementViewProps> = (props) => {
 
       case 'quote':
         return <QuoteBlock {...chromeAttributes}>{children}</QuoteBlock>;
+
+      case 'verse-group':
+        return <VerseGroup {...chromeAttributes}>{children}</VerseGroup>;
+
+      case 'verse-line':
+        return (
+          <VerseLine {...attributes}>
+            {children}
+          </VerseLine>
+        );
 
       case 'quote-attrib':
         return <AttribText {...attributes}>{children}</AttribText>;
@@ -582,7 +631,7 @@ const VoidInlineField: React.FC<{
   initialInline: InlineNode[];
   onInlineChange: (nodes: InlineNode[]) => void;
   placeholder?: string;
-  xrefTargets: Array<{ id: string; label: string }>;
+  xrefTargets: XrefTarget[];
   fieldKey: string;
 }> = ({ initialInline, onInlineChange, placeholder, xrefTargets, fieldKey }) => (
   <InlineRichEditor
@@ -600,7 +649,7 @@ const TableBlockView: React.FC<{
   attributes: RenderElementProps['attributes'];
   element: TableElement;
   editor: Editor;
-  xrefTargets: Array<{ id: string; label: string }>;
+  xrefTargets: XrefTarget[];
   children: React.ReactNode;
 }> = ({ attributes, element, editor, xrefTargets, children }) => {
   const headerRowCount = getHeaderRowCount(element.tableTemplate);
@@ -649,18 +698,21 @@ const TableBlockView: React.FC<{
             value={element.label}
             onChange={(e) => updateVoidElement(editor, element, { label: e.target.value })}
           />
-          <FieldInput
-            style={{ flex: 1 }}
-            placeholder="Legenda"
-            value={element.captionTitle}
-            onChange={(e) => updateVoidElement(editor, element, { captionTitle: e.target.value })}
-          />
+          <CaptionField style={{ flex: 1 }}>
+            <VoidInlineField
+              fieldKey={`${element.tableId || 'table'}-caption`}
+              initialInline={element.captionTitle}
+              placeholder="Legenda"
+              xrefTargets={xrefTargets}
+              onInlineChange={(captionTitle) => updateVoidElement(editor, element, { captionTitle })}
+            />
+          </CaptionField>
         </Flex2>
-        {(element.label || element.captionTitle) && (
+        {(element.label || !isInlineEmpty(element.captionTitle)) && (
           <CaptionHeading>
             {element.label && <strong>{element.label}</strong>}
-            {element.label && element.captionTitle ? ': ' : ''}
-            {element.captionTitle}
+            {element.label && !isInlineEmpty(element.captionTitle) ? ': ' : ''}
+            <InlineContentPreview nodes={element.captionTitle} />
           </CaptionHeading>
         )}
         <TableStructureActions>
@@ -737,7 +789,7 @@ const FigureBlockView: React.FC<{
   attributes: RenderElementProps['attributes'];
   element: FigureElement;
   editor: Editor;
-  xrefTargets: Array<{ id: string; label: string }>;
+  xrefTargets: XrefTarget[];
   children: React.ReactNode;
 }> = ({ attributes, element, editor, xrefTargets, children }) => (
   <div {...attributes} contentEditable={false}>
@@ -750,18 +802,21 @@ const FigureBlockView: React.FC<{
           value={element.label}
           onChange={(e) => updateVoidElement(editor, element, { label: e.target.value })}
         />
-        <FieldInput
-          style={{ flex: 1 }}
-          placeholder="Legenda"
-          value={element.captionTitle}
-          onChange={(e) => updateVoidElement(editor, element, { captionTitle: e.target.value })}
-        />
+        <CaptionField style={{ flex: 1 }}>
+          <VoidInlineField
+            fieldKey={`${element.figureId || 'figure'}-caption`}
+            initialInline={element.captionTitle}
+            placeholder="Legenda"
+            xrefTargets={xrefTargets}
+            onInlineChange={(captionTitle) => updateVoidElement(editor, element, { captionTitle })}
+          />
+        </CaptionField>
       </Flex2>
-      {(element.label || element.captionTitle) && (
+      {(element.label || !isInlineEmpty(element.captionTitle)) && (
         <CaptionHeading>
           {element.label && <strong>{element.label}</strong>}
-          {element.label && element.captionTitle ? ': ' : ''}
-          {element.captionTitle}
+          {element.label && !isInlineEmpty(element.captionTitle) ? ': ' : ''}
+          <InlineContentPreview nodes={element.captionTitle} />
         </CaptionHeading>
       )}
       {element.href && <img src={element.href} alt={element.label || 'Figura'} />}
@@ -785,6 +840,10 @@ const Flex2 = styled.div<{ gap?: string }>`
   display: flex;
   gap: ${({ gap }) => gap || '4px'};
   margin-bottom: 8px;
+`;
+
+const CaptionField = styled.div`
+  min-width: 0;
 `;
 
 const FieldInput = styled.input`

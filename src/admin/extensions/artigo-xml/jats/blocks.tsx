@@ -9,6 +9,8 @@ import {
   FigureWrapper,
   SectionHeading,
   TableWrapper,
+  VerseGroup,
+  VerseLine,
 } from './styles';
 
 const BLOCK_TAGS = new Set([
@@ -19,6 +21,7 @@ const BLOCK_TAGS = new Set([
   'fig',
   'disp-quote',
   'boxed-text',
+  'verse-group',
 ]);
 
 const directChild = (el: Element, tagName: string): Element | null => {
@@ -34,6 +37,17 @@ const XLINK_NS = 'http://www.w3.org/1999/xlink';
 
 const getGraphicHref = (el: Element): string | null =>
   el.getAttributeNS(XLINK_NS, 'href') || el.getAttribute('xlink:href') || el.getAttribute('href');
+
+/** JATS often wraps `<fig>` in a `<p>`; detect that pattern for block-level rendering. */
+const singleFigChild = (el: Element): Element | null => {
+  const elementChildren = Array.from(el.children).filter(
+    (c) => c.nodeType === Node.ELEMENT_NODE
+  ) as Element[];
+  if (elementChildren.length === 1 && elementChildren[0].tagName.toLowerCase() === 'fig') {
+    return elementChildren[0];
+  }
+  return null;
+};
 
 /**
  * Renders a sequence of JATS block-level nodes (as found directly under
@@ -87,8 +101,13 @@ const renderBlockElement = (el: Element, key: string, depth: number): React.Reac
     case 'attrib':
       return null;
 
-    case 'p':
+    case 'p': {
+      const figEl = singleFigChild(el);
+      if (figEl) {
+        return <Figure key={key} el={figEl} keyPrefix={key} />;
+      }
       return <p key={key}>{renderInlineNodes(el.childNodes, key)}</p>;
+    }
 
     case 'sec':
       return <Section key={key} el={el} keyPrefix={key} depth={depth} />;
@@ -108,6 +127,24 @@ const renderBlockElement = (el: Element, key: string, depth: number): React.Reac
 
     case 'boxed-text':
       return <BoxedText key={key}>{renderBlockNodes(el.childNodes, key, depth)}</BoxedText>;
+
+    case 'verse-group': {
+      const lines = Array.from(el.children).filter(
+        (child) => child.tagName.toLowerCase() === 'verse-line'
+      );
+      if (lines.length === 0) {
+        return null;
+      }
+      return (
+        <VerseGroup key={key}>
+          {lines.map((line, index) => (
+            <VerseLine key={`${key}-vl-${index}`}>
+              {renderInlineNodes(line.childNodes, `${key}-vl-${index}`)}
+            </VerseLine>
+          ))}
+        </VerseGroup>
+      );
+    }
 
     case 'list': {
       const ordered = (el.getAttribute('list-type') || '').toLowerCase() === 'order';

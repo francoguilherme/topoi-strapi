@@ -5,12 +5,12 @@ import { Editable, RenderElementProps, Slate, withReact, useSlate } from 'slate-
 import styled from 'styled-components';
 
 import { ParagraphElement } from './advancedBlocks';
+import { XrefTarget } from './domMutations';
 import { FloatingToolbar } from './FloatingToolbar';
+import { LinkDialogProvider, useLinkDialog } from './LinkDialog';
 import {
   deserializeInline,
   InlineNode,
-  insertLink,
-  insertXref,
   isMarkActive,
   MarkKey,
   renderInlineElement,
@@ -19,9 +19,10 @@ import {
   toggleMark,
   withInlines,
 } from './inlineModel';
+import { XrefTargetSelect } from './xrefTargetSelect';
 
 export { deserializeInline, serializeInline } from './inlineModel';
-export type { InlineNode, FormattedText, LinkElement, XrefElement, BreakElement } from './inlineModel';
+export type { InlineNode, FormattedText, LinkElement, XrefElement, BreakElement, XrefRefType } from './inlineModel';
 
 const MarkButton: React.FC<{ mark: MarkKey; label: React.ReactNode; title: string }> = ({
   mark,
@@ -45,17 +46,14 @@ const MarkButton: React.FC<{ mark: MarkKey; label: React.ReactNode; title: strin
 };
 
 const LinkButton: React.FC = () => {
-  const editor = useSlate();
+  const { openInsertDialog } = useLinkDialog();
   return (
     <ToolbarButton
       type="button"
       title="Inserir link"
       onMouseDown={(event) => {
         event.preventDefault();
-        const href = window.prompt('URL do link:');
-        if (href) {
-          insertLink(editor, href);
-        }
+        openInsertDialog();
       }}
     >
       🔗
@@ -63,31 +61,9 @@ const LinkButton: React.FC = () => {
   );
 };
 
-const XrefSelect: React.FC<{ targets: Array<{ id: string; label: string }> }> = ({ targets }) => {
-  const editor = useSlate();
-  return (
-    <ToolbarSelect
-      defaultValue=""
-      title="Inserir referência cruzada"
-      onChange={(event) => {
-        const target = targets.find((t) => t.id === event.target.value);
-        event.target.value = '';
-        if (target) {
-          insertXref(editor, target.id, target.label);
-        }
-      }}
-    >
-      <option value="" hidden>
-        + Ref. cruzada
-      </option>
-      {targets.map((target) => (
-        <option key={target.id} value={target.id}>
-          {target.label}
-        </option>
-      ))}
-    </ToolbarSelect>
-  );
-};
+const XrefSelect: React.FC<{ targets: XrefTarget[] }> = ({ targets }) => (
+  <XrefTargetSelect targets={targets} Select={ToolbarSelect} />
+);
 
 const renderElement = (props: RenderElementProps) =>
   renderInlineElement(props) ?? <EditorParagraph {...props.attributes}>{props.children}</EditorParagraph>;
@@ -110,7 +86,7 @@ interface InlineRichEditorProps {
   /** Font size for the editable area; defaults to compact form-field sizing. */
   fontSize?: string;
   /** Enables the cross-reference picker, pointing at the article's footnotes/references. */
-  xrefTargets?: Array<{ id: string; label: string }>;
+  xrefTargets?: XrefTarget[];
   /** `fixed` = always-visible toolbar above the field (default); `floating` = selection popover. */
   toolbar?: 'fixed' | 'floating';
   /** Compact single-line look for table cells / short notes. */
@@ -161,26 +137,28 @@ export const InlineRichEditor: React.FC<InlineRichEditorProps> = ({
   return (
     <EditorWrapper $compact={compact}>
       <Slate editor={editor} initialValue={initialValue} onChange={handleChange}>
-        {toolbar === 'fixed' && (
-          <Toolbar>
-            <MarkButton mark="bold" label={<strong>B</strong>} title="Negrito" />
-            <MarkButton mark="italic" label={<em>I</em>} title="Itálico" />
-            <MarkButton mark="underline" label={<u>S</u>} title="Sublinhado" />
-            <MarkButton mark="sup" label="x²" title="Sobrescrito" />
-            <MarkButton mark="sub" label="x₂" title="Subscrito" />
-            <LinkButton />
-            {xrefTargets && xrefTargets.length > 0 && <XrefSelect targets={xrefTargets} />}
-          </Toolbar>
-        )}
-        {toolbar === 'floating' && <FloatingToolbar xrefTargets={xrefTargets ?? []} />}
-        <EditableArea
-          $fontSize={fontSize}
-          $compact={compact}
-          renderElement={renderElement}
-          renderLeaf={renderInlineLeaf}
-          onBlur={onBlur}
-          placeholder={placeholder}
-        />
+        <LinkDialogProvider>
+          {toolbar === 'fixed' && (
+            <Toolbar>
+              <MarkButton mark="bold" label={<strong>B</strong>} title="Negrito" />
+              <MarkButton mark="italic" label={<em>I</em>} title="Itálico" />
+              <MarkButton mark="underline" label={<u>S</u>} title="Sublinhado" />
+              <MarkButton mark="sup" label="x²" title="Sobrescrito" />
+              <MarkButton mark="sub" label="x₂" title="Subscrito" />
+              <LinkButton />
+              {xrefTargets && xrefTargets.length > 0 && <XrefSelect targets={xrefTargets} />}
+            </Toolbar>
+          )}
+          {toolbar === 'floating' && <FloatingToolbar xrefTargets={xrefTargets ?? []} />}
+          <EditableArea
+            $fontSize={fontSize}
+            $compact={compact}
+            renderElement={renderElement}
+            renderLeaf={renderInlineLeaf}
+            onBlur={onBlur}
+            placeholder={placeholder}
+          />
+        </LinkDialogProvider>
       </Slate>
     </EditorWrapper>
   );

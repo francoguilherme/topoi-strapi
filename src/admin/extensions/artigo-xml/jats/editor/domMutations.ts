@@ -11,6 +11,8 @@
  * round trip untouched.
  */
 
+import type { XrefRefType } from './inlineModel';
+
 export const directChildren = (el: Element | null | undefined, tagName: string): Element[] =>
   el ? Array.from(el.children).filter((c) => c.tagName.toLowerCase() === tagName.toLowerCase()) : [];
 
@@ -119,7 +121,37 @@ export const countXrefsToId = (doc: Document, id: string): number =>
 export interface XrefTarget {
   id: string;
   label: string;
+  refType: XrefRefType;
 }
+
+const mediaLabel = (kind: 'Figura' | 'Tabela', id: string, labelEl: Element | null): string => {
+  const label = labelEl?.textContent?.trim();
+  return label || `${kind} ${id}`;
+};
+
+const collectFigTargets = (root: Element): XrefTarget[] =>
+  Array.from(root.getElementsByTagName('fig'))
+    .map((fig) => {
+      const id = fig.getAttribute('id') || '';
+      return {
+        id,
+        refType: 'fig' as const,
+        label: mediaLabel('Figura', id, directChild(fig, 'label')),
+      };
+    })
+    .filter((target) => target.id);
+
+const collectTableTargets = (root: Element): XrefTarget[] =>
+  Array.from(root.getElementsByTagName('table-wrap'))
+    .map((wrap) => {
+      const id = wrap.getAttribute('id') || '';
+      return {
+        id,
+        refType: 'table' as const,
+        label: mediaLabel('Tabela', id, directChild(wrap, 'label')),
+      };
+    })
+    .filter((target) => target.id);
 
 /**
  * Lists every footnote and reference that can be linked to via `<xref rid="...">`, for the
@@ -132,7 +164,7 @@ export const listXrefTargets = (doc: Document): XrefTarget[] => {
     .map((fn) => {
       const id = fn.getAttribute('id') || '';
       const label = directChild(fn, 'label')?.textContent?.trim();
-      return { id, label: `Nota ${label || id}` };
+      return { id, refType: 'fn' as const, label: `Nota ${label || id}` };
     })
     .filter((target) => target.id);
 
@@ -141,11 +173,24 @@ export const listXrefTargets = (doc: Document): XrefTarget[] => {
       const id = ref.getAttribute('id') || '';
       const citation = directChild(ref, 'mixed-citation')?.textContent?.replace(/\s+/g, ' ').trim() || '';
       const snippet = citation.length > 60 ? `${citation.slice(0, 60)}…` : citation;
-      return { id, label: snippet ? `Ref. ${id} — ${snippet}` : `Ref. ${id}` };
+      return {
+        id,
+        refType: 'bibr' as const,
+        label: snippet ? `Ref. ${id} — ${snippet}` : `Ref. ${id}`,
+      };
     })
     .filter((target) => target.id);
 
   return [...notes, ...refs];
+};
+
+/** Lists figure and table targets from the article `<body>` for cross-reference pickers. */
+export const listMediaXrefTargets = (doc: Document): XrefTarget[] => {
+  const body = doc.getElementsByTagName('body')[0];
+  if (!body) {
+    return [];
+  }
+  return [...collectFigTargets(body), ...collectTableTargets(body)];
 };
 
 /**

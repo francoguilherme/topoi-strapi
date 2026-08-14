@@ -41,6 +41,7 @@ const BLOCK_CONTAINER_TAGS = new Set([
   'list-item',
   'disp-quote',
   'boxed-text',
+  'verse-group',
   'fn-group',
   'ref-list',
   'publisher',

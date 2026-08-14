@@ -155,6 +155,17 @@ export const Blockquote = styled.blockquote`
   font-size: 0.9em;
 `;
 
+export const VerseGroup = styled.div`
+  margin: 1em 2em;
+`;
+
+export const VerseLine = styled.div`
+  font-size: 0.9em;
+  text-align: left;
+  margin: 0;
+  white-space: pre-wrap;
+`;
+
 export const BoxedText = styled.div`
   margin: 1em 0;
   padding: 1em 1.25em;

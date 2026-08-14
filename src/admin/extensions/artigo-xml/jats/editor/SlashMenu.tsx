@@ -10,8 +10,9 @@ import { Editor, Element as SlateElement, Node as SlateNode, Path, Range, Transf
 import { ReactEditor } from 'slate-react';
 import styled from 'styled-components';
 
-import { BLOCK_KIND_LABELS, BlockKind, createEmptyBlock, SectionElement } from './advancedBlocks';
+import { BLOCK_KIND_LABELS, BlockElement, BlockKind, createEmptyBlock, SectionElement } from './advancedBlocks';
 import { useArtigoXmlViewportScrollLock } from './useArtigoXmlViewportScrollLock';
+import { isInsideVerseGroup } from './verseEditing';
 
 const SLASH_TRIGGER_TYPES = new Set(['paragraph']);
 
@@ -36,6 +37,7 @@ const BLOCK_KIND_ORDER: BlockKind[] = [
   //'bulleted-list',
   //'numbered-list',
   'quote',
+  'verse-group',
   'table',
   'figure',
   //'boxed-text',
@@ -71,6 +73,10 @@ const detectSlashTarget = (editor: Editor): SlashTarget | null => {
   if (isInsideQuote(editor, parentPath)) {
     return null;
   }
+  // Verse groups only accept verse lines — never open the block palette inside one.
+  if (isInsideVerseGroup(editor, parentPath)) {
+    return null;
+  }
 
   const text = Editor.string(editor, parentPath);
   const match = text.match(/^\/(\S*)$/);
@@ -100,7 +106,10 @@ export interface SlashMenuController {
   selectItem: (kind: BlockKind) => void;
 }
 
-export const useSlashMenu = (editor: Editor): SlashMenuController => {
+export const useSlashMenu = (
+  editor: Editor,
+  prepareBlock?: (kind: BlockKind, block: BlockElement) => BlockElement
+): SlashMenuController => {
   const [activeIndex, setActiveIndex] = React.useState(0);
   const [dismissedKey, setDismissedKey] = React.useState<string | null>(null);
 
@@ -128,14 +137,16 @@ export const useSlashMenu = (editor: Editor): SlashMenuController => {
         return;
       }
       const depth = sectionDepthAt(editor, target.path);
-      const block = createEmptyBlock(kind, depth);
+      let block = createEmptyBlock(kind, depth);
+      if (prepareBlock) {
+        block = prepareBlock(kind, block);
+      }
       Transforms.removeNodes(editor, { at: target.path });
       Transforms.insertNodes(editor, block, { at: target.path });
       Transforms.select(editor, Editor.start(editor, target.path));
       ReactEditor.focus(editor);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [editor, targetKey]
+    [editor, targetKey, prepareBlock]
   );
 
   const isDismissed = targetKey !== null && targetKey === dismissedKey;

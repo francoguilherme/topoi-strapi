@@ -10,6 +10,7 @@ import * as React from 'react';
 import styled from 'styled-components';
 
 import { useArtigoXmlNavigation } from '../../ArtigoXmlNavigationContext';
+import { useLinkDialog } from './linkDialogContext';
 
 export const XLINK_NS = 'http://www.w3.org/1999/xlink';
 
@@ -49,11 +50,44 @@ export interface LinkElement {
   children: InlineLeaf[];
 }
 
+export type XrefRefType = 'bibr' | 'fn' | 'fig' | 'table' | 'aff';
+
 export interface XrefElement {
   type: 'xref';
   rid: string;
+  refType: XrefRefType;
   children: InlineLeaf[];
 }
+
+const VALID_XREF_REF_TYPES = new Set<XrefRefType>(['bibr', 'fn', 'fig', 'table', 'aff']);
+
+/** Infers `ref-type` from `rid` when the attribute is missing in legacy XML. */
+export const inferXrefRefType = (rid: string): XrefRefType => {
+  if (/^fn\d+$/i.test(rid)) {
+    return 'fn';
+  }
+  if (/^B\d+$/i.test(rid)) {
+    return 'bibr';
+  }
+  if (/^[Ff]\d+$/.test(rid)) {
+    return 'fig';
+  }
+  if (/^[Tt]\d+$/.test(rid)) {
+    return 'table';
+  }
+  if (/^aff\d+$/i.test(rid)) {
+    return 'aff';
+  }
+  return 'bibr';
+};
+
+const parseXrefRefType = (el: Element, rid: string): XrefRefType => {
+  const raw = el.getAttribute('ref-type');
+  if (raw && VALID_XREF_REF_TYPES.has(raw as XrefRefType)) {
+    return raw as XrefRefType;
+  }
+  return inferXrefRefType(rid);
+};
 
 export type InlineNode = FormattedText | LinkElement | XrefElement | BreakElement;
 
@@ -136,7 +170,8 @@ const deserializeWalk = (
     if (allowNestedInlines && (tag === 'xref' || tag === 'ext-link' || tag === 'uri' || tag === 'email')) {
       const children = deserializeWalk(el.childNodes, marks, false) as InlineLeaf[];
       if (tag === 'xref') {
-        result.push({ type: 'xref', rid: el.getAttribute('rid') || '', children });
+        const rid = el.getAttribute('rid') || '';
+        result.push({ type: 'xref', rid, refType: parseXrefRefType(el, rid), children });
       } else if (tag === 'email') {
         result.push({ type: 'link', href: `mailto:${el.textContent ?? ''}`, isEmail: true, children });
       } else {
@@ -207,6 +242,7 @@ export const serializeInline = (nodes: InlineNode[], doc: Document): Node[] => {
 
     if (node.type === 'xref') {
       const el = doc.createElement('xref');
+      el.setAttribute('ref-type', node.refType);
       el.setAttribute('rid', node.rid);
       serializeInlineLeaves(doc, node.children).forEach((child) => el.appendChild(child));
       out.push(el);
@@ -215,6 +251,7 @@ export const serializeInline = (nodes: InlineNode[], doc: Document): Node[] => {
 
     const el = doc.createElement(node.isEmail ? 'email' : 'ext-link');
     if (!node.isEmail) {
+      el.setAttribute('ext-link-type', 'uri');
       el.setAttributeNS(XLINK_NS, 'xlink:href', node.href);
     }
     serializeInlineLeaves(doc, node.children).forEach((child) => el.appendChild(child));
@@ -256,17 +293,17 @@ export const insertLink = (editor: Editor, href: string): void => {
   }
 };
 
-export const insertXref = (editor: Editor, rid: string, label: string): void => {
+export const insertXref = (editor: Editor, rid: string, label: string, refType: XrefRefType): void => {
   if (!editor.selection) {
     return;
   }
 
   if (Range.isCollapsed(editor.selection)) {
-    Transforms.insertNodes(editor, { type: 'xref', rid, children: [{ text: label }] });
+    Transforms.insertNodes(editor, { type: 'xref', rid, refType, children: [{ text: label }] });
   } else {
     // Wrap the selected text itself in the xref, instead of replacing it with the
     // target's label — mirrors `insertLink`'s behaviour for a non-collapsed selection.
-    Transforms.wrapNodes(editor, { type: 'xref', rid, children: [] }, { split: true });
+    Transforms.wrapNodes(editor, { type: 'xref', rid, refType, children: [] }, { split: true });
     Transforms.collapse(editor, { edge: 'end' });
   }
 };
@@ -283,19 +320,79 @@ export const removeXref = (editor: Editor, element: XrefElement): void => {
   }
 };
 
-const LinkChip: React.FC<{ href: string; children: React.ReactNode } & Record<string, unknown>> = ({
-  href,
-  children,
-  ...attributes
-}) => (
-  <span
-    {...attributes}
-    title={href}
-    style={{ color: '#4945ff', textDecoration: 'underline', textDecorationStyle: 'dotted' }}
-  >
-    {children}
-  </span>
-);
+export const removeLink = (editor: Editor, element: LinkElement): void => {
+  try {
+    const path = ReactEditor.findPath(editor, element);
+    Transforms.unwrapNodes(editor, {
+      at: path,
+      match: (node) => SlateElement.isElement(node) && node.type === 'link',
+    });
+  } catch {
+    // The node may already have been removed by a concurrent update.
+  }
+};
+
+export const updateLink = (editor: Editor, element: LinkElement, href: string): void => {
+  try {
+    const path = ReactEditor.findPath(editor, element);
+    Transforms.setNodes(editor, { href }, { at: path });
+  } catch {
+    // The node may already have been removed by a concurrent update.
+  }
+};
+
+const truncateHref = (href: string, maxLength = 40): string =>
+  href.length > maxLength ? `${href.slice(0, maxLength)}…` : href;
+
+const LinkElementView: React.FC<RenderElementProps> = ({ attributes, children, element }) => {
+  const editor = useSlate();
+  const { openEditDialog } = useLinkDialog();
+
+  if (element.type !== 'link') {
+    return null;
+  }
+
+  if (element.isEmail) {
+    return (
+      <span
+        {...attributes}
+        title={element.href}
+        style={{ color: '#4945ff', textDecoration: 'underline', textDecorationStyle: 'dotted' }}
+      >
+        {children}
+      </span>
+    );
+  }
+
+  const handleEdit = (event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openEditDialog(element);
+  };
+
+  const handleRemove = (event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    removeLink(editor, element);
+  };
+
+  return (
+    <LinkWrapper {...attributes} title={element.href}>
+      {children}
+      <LinkMenu contentEditable={false} suppressContentEditableWarning>
+        <LinkMenuHref type="button" title={element.href} onMouseDown={handleEdit}>
+          {truncateHref(element.href)}
+        </LinkMenuHref>
+        <LinkMenuButton type="button" onMouseDown={handleEdit}>
+          Editar
+        </LinkMenuButton>
+        <LinkMenuButton type="button" onMouseDown={handleRemove}>
+          Remover
+        </LinkMenuButton>
+      </LinkMenu>
+    </LinkWrapper>
+  );
+};
 
 const XrefElementView: React.FC<RenderElementProps> = ({ attributes, children, element }) => {
   const editor = useSlate();
@@ -318,7 +415,7 @@ const XrefElementView: React.FC<RenderElementProps> = ({ attributes, children, e
   };
 
   return (
-    <XrefWrapper {...attributes} title={`Referência cruzada: ${element.rid}`}>
+    <XrefWrapper {...attributes} title={`Referência cruzada (${element.refType}): ${element.rid}`}>
       {children}
       <XrefMenu contentEditable={false} suppressContentEditableWarning>
         <XrefMenuRid
@@ -346,11 +443,7 @@ export const renderInlineElement = (props: RenderElementProps): React.ReactEleme
   const { attributes, children, element } = props;
   switch (element.type) {
     case 'link':
-      return (
-        <LinkChip {...attributes} href={element.href}>
-          {children}
-        </LinkChip>
-      );
+      return <LinkElementView {...props} />;
     case 'xref':
       return <XrefElementView {...props} />;
     case 'break':
@@ -382,7 +475,60 @@ export const renderInlineLeaf = ({ attributes, children, leaf }: RenderLeafProps
   return <span {...attributes}>{content}</span>;
 };
 
+const applyPreviewMarks = (leaf: FormattedText, content: React.ReactNode): React.ReactNode => {
+  let result = content;
+  if (leaf.monospace) result = <code>{result}</code>;
+  if (leaf.smallCaps) result = <span style={{ fontVariant: 'small-caps' }}>{result}</span>;
+  if (leaf.strike) result = <span style={{ textDecoration: 'line-through' }}>{result}</span>;
+  if (leaf.sub) result = <sub>{result}</sub>;
+  if (leaf.sup) result = <sup>{result}</sup>;
+  if (leaf.underline) result = <span style={{ textDecoration: 'underline' }}>{result}</span>;
+  if (leaf.italic) result = <em>{result}</em>;
+  if (leaf.bold) result = <strong>{result}</strong>;
+  return result;
+};
+
+const renderPreviewLeaf = (leaf: InlineLeaf, key: string): React.ReactNode => {
+  if (!isFormattedText(leaf)) {
+    return <br key={key} />;
+  }
+  if (!leaf.text) {
+    return null;
+  }
+  return <React.Fragment key={key}>{applyPreviewMarks(leaf, leaf.text)}</React.Fragment>;
+};
+
+const renderPreviewNode = (node: InlineNode, key: string): React.ReactNode => {
+  if (isFormattedText(node)) {
+    return renderPreviewLeaf(node, key);
+  }
+  if (node.type === 'break') {
+    return <br key={key} />;
+  }
+  if (node.type === 'link') {
+    return (
+      <span key={key} style={{ color: '#4945ff', textDecoration: 'underline' }}>
+        {node.children.map((child, index) => renderPreviewLeaf(child, `${key}-${index}`))}
+      </span>
+    );
+  }
+  if (node.type === 'xref') {
+    return (
+      <span key={key} style={{ color: '#4945ff' }}>
+        {node.children.map((child, index) => renderPreviewLeaf(child, `${key}-${index}`))}
+      </span>
+    );
+  }
+  return null;
+};
+
+/** Read-only preview of inline nodes (e.g. figure/table caption headings in the advanced editor). */
+export const InlineContentPreview: React.FC<{ nodes: InlineNode[] }> = ({ nodes }) => (
+  <>{nodes.map((node, index) => renderPreviewNode(node, String(index)))}</>
+);
+
 const XrefMenu = styled.span`
+  user-select: none;
   display: none;
   position: absolute;
   left: 50%;
@@ -444,12 +590,88 @@ const XrefMenuButton = styled.button`
 
 const XrefWrapper = styled.span`
   position: relative;
-  background: #f0f0ff;
   border-radius: 3px;
   padding: 0 3px;
   color: #4945ff;
 
   &:hover ${XrefMenu} {
+    display: inline-flex;
+  }
+`;
+
+const LinkMenu = styled.span`
+  user-select: none;
+  display: none;
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 4px);
+  transform: translateX(-50%);
+  z-index: 5;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: #212134;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(33, 33, 52, 0.25);
+  white-space: nowrap;
+
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    height: 4px;
+  }
+`;
+
+const LinkMenuHref = styled.button`
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.2;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #a5a5ba;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  &:hover {
+    color: #fff;
+    background: #32324d;
+  }
+`;
+
+const LinkMenuButton = styled.button`
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.2;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+
+  &:hover {
+    background: #32324d;
+  }
+`;
+
+const LinkWrapper = styled.span`
+  position: relative;
+  border-radius: 3px;
+  padding: 0 3px;
+  color: #4945ff;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+
+  &:hover ${LinkMenu} {
     display: inline-flex;
   }
 `;

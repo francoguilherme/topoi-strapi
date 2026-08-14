@@ -7,7 +7,7 @@
  * mini single-paragraph editor only ever produces a subset of these (`paragraph` plus
  * the shared inline types), so it stays compatible without its own declaration.
  */
-import { BaseEditor } from 'slate';
+import { BaseEditor, Editor, Transforms } from 'slate';
 import { HistoryEditor } from 'slate-history';
 import { ReactEditor } from 'slate-react';
 
@@ -21,13 +21,195 @@ import {
   FormattedText,
   XrefElement,
 } from './inlineModel';
+import { nextFreeId, XrefTarget } from './domMutations';
+
+const isParagraphWithSingleFig = (el: Element): Element | null => {
+  const elementChildren = Array.from(el.children).filter((c) => c.nodeType === Node.ELEMENT_NODE) as Element[];
+  if (elementChildren.length === 1 && elementChildren[0].tagName.toLowerCase() === 'fig') {
+    return elementChildren[0];
+  }
+  return null;
+};
+
+const collectBlockMediaIds = (nodes: BlockElement[], used: Set<string>): void => {
+  nodes.forEach((node) => {
+    if (node.type === 'figure' && node.figureId) {
+      used.add(node.figureId);
+    } else if (node.type === 'table' && node.tableId) {
+      used.add(node.tableId);
+    } else if (node.type === 'section') {
+      collectBlockMediaIds(node.children.slice(1) as BlockElement[], used);
+    } else if (node.type === 'list') {
+      node.children.forEach((item) => collectBlockMediaIds(item.children, used));
+    } else if (node.type === 'quote') {
+      collectBlockMediaIds(
+        node.children.filter((child): child is BlockElement => child.type !== 'quote-attrib'),
+        used
+      );
+    } else if (node.type === 'boxed-text') {
+      collectBlockMediaIds(node.children, used);
+    }
+  });
+};
+
+const nextFreeBlockId = (used: Set<string>, prefix: string): string => {
+  let n = 1;
+  while (used.has(`${prefix}${n}`)) {
+    n += 1;
+  }
+  const id = `${prefix}${n}`;
+  used.add(id);
+  return id;
+};
+
+/** Assigns `F{n}` / `T{n}` ids to figure/table blocks that don't have one yet. */
+export const ensureMediaBlockIds = (blocks: BlockElement[], doc: Document): BlockElement[] => {
+  const used = new Set<string>();
+  doc.querySelectorAll('[id]').forEach((el) => {
+    const id = el.getAttribute('id');
+    if (id) {
+      used.add(id);
+    }
+  });
+  collectBlockMediaIds(blocks, used);
+
+  const walk = (nodes: BlockElement[]): BlockElement[] =>
+    nodes.map((node) => {
+      if (node.type === 'figure') {
+        return { ...node, figureId: node.figureId || nextFreeBlockId(used, 'F') };
+      }
+      if (node.type === 'table') {
+        return { ...node, tableId: node.tableId || nextFreeBlockId(used, 'T') };
+      }
+      if (node.type === 'section') {
+        const [heading, ...rest] = node.children;
+        return { ...node, children: [heading, ...walk(rest)] as SectionElement['children'] };
+      }
+      if (node.type === 'list') {
+        return {
+          ...node,
+          children: node.children.map((item) => ({ ...item, children: walk(item.children) })),
+        };
+      }
+      if (node.type === 'quote') {
+        return {
+          ...node,
+          children: node.children.map((child) =>
+            child.type === 'quote-attrib' ? child : walk([child as BlockElement])[0]
+          ) as QuoteElement['children'],
+        };
+      }
+      if (node.type === 'boxed-text') {
+        return { ...node, children: walk(node.children) };
+      }
+      return node;
+    });
+
+  return walk(blocks);
+};
+
+const walkMediaTargets = (nodes: BlockElement[], targets: XrefTarget[]): void => {
+  nodes.forEach((node) => {
+    if (node.type === 'figure' && node.figureId) {
+      targets.push({
+        id: node.figureId,
+        refType: 'fig',
+        label: node.label.trim() || `Figura ${node.figureId}`,
+      });
+    } else if (node.type === 'table' && node.tableId) {
+      targets.push({
+        id: node.tableId,
+        refType: 'table',
+        label: node.label.trim() || `Tabela ${node.tableId}`,
+      });
+    } else if (node.type === 'section') {
+      walkMediaTargets(node.children.slice(1) as BlockElement[], targets);
+    } else if (node.type === 'list') {
+      node.children.forEach((item) => walkMediaTargets(item.children, targets));
+    } else if (node.type === 'quote') {
+      walkMediaTargets(
+        node.children.filter((child): child is BlockElement => child.type !== 'quote-attrib'),
+        targets
+      );
+    } else if (node.type === 'boxed-text') {
+      walkMediaTargets(node.children, targets);
+    }
+  });
+};
+
+/** Collects figure/table xref targets from a Slate body value (includes uncommitted blocks). */
+export const collectMediaXrefTargets = (blocks: BlockElement[]): XrefTarget[] => {
+  const targets: XrefTarget[] = [];
+  walkMediaTargets(blocks, targets);
+  return targets;
+};
+
+/** Returns the next free media id for a newly inserted figure or table block. */
+export const nextMediaBlockId = (doc: Document, kind: 'figure' | 'table'): string =>
+  nextFreeId(doc, kind === 'figure' ? 'F' : 'T');
+
+/** Writes auto-assigned figure/table ids back into the live Slate document. */
+export const syncMediaBlockIdsToEditor = (
+  editor: Editor,
+  before: BlockElement[],
+  after: BlockElement[]
+): void => {
+  const syncWalk = (bNodes: BlockElement[], aNodes: BlockElement[], basePath: number[]): void => {
+    const limit = Math.min(bNodes.length, aNodes.length);
+    for (let i = 0; i < limit; i += 1) {
+      const bNode = bNodes[i];
+      const aNode = aNodes[i];
+      const path = [...basePath, i];
+
+      if (bNode.type === 'figure' && aNode.type === 'figure' && !bNode.figureId && aNode.figureId) {
+        try {
+          Transforms.setNodes(editor, { figureId: aNode.figureId }, { at: path });
+        } catch {
+          // Node may have been removed by a concurrent update.
+        }
+      }
+      if (bNode.type === 'table' && aNode.type === 'table' && !bNode.tableId && aNode.tableId) {
+        try {
+          Transforms.setNodes(editor, { tableId: aNode.tableId }, { at: path });
+        } catch {
+          // Node may have been removed by a concurrent update.
+        }
+      }
+
+      if (bNode.type === 'section' && aNode.type === 'section') {
+        syncWalk(
+          bNode.children.slice(1) as BlockElement[],
+          aNode.children.slice(1) as BlockElement[],
+          [...path, 1]
+        );
+      } else if (bNode.type === 'list' && aNode.type === 'list') {
+        bNode.children.forEach((bItem, j) => {
+          const aItem = aNode.children[j];
+          if (aItem) {
+            syncWalk(bItem.children, aItem.children, [...path, j]);
+          }
+        });
+      } else if (bNode.type === 'quote' && aNode.type === 'quote') {
+        syncWalk(
+          bNode.children.filter((child): child is BlockElement => child.type !== 'quote-attrib'),
+          aNode.children.filter((child): child is BlockElement => child.type !== 'quote-attrib'),
+          path
+        );
+      } else if (bNode.type === 'boxed-text' && aNode.type === 'boxed-text') {
+        syncWalk(bNode.children, aNode.children, path);
+      }
+    }
+  };
+
+  syncWalk(before, after, []);
+};
 
 /** Empty inline run used for blank table cells / attrib notes. */
 export const createEmptyInline = (): InlineNode[] => [{ text: '' }];
 
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 
-const BLOCK_TAGS = new Set(['p', 'sec', 'disp-quote', 'table-wrap', 'fig', 'list', 'boxed-text']);
+const BLOCK_TAGS = new Set(['p', 'sec', 'disp-quote', 'table-wrap', 'fig', 'list', 'boxed-text', 'verse-group']);
 
 const directChild = (el: Element, tag: string): Element | null =>
   Array.from(el.children).find((c) => c.tagName.toLowerCase() === tag) ?? null;
@@ -37,6 +219,8 @@ const directChildren = (el: Element, tag: string): Element[] =>
 
 const isInlineEmpty = (nodes: InlineNode[]): boolean =>
   nodes.every((node) => isFormattedText(node) && !node.text.trim());
+
+export { isInlineEmpty };
 
 // --- Slate element schema -----------------------------------------------------------
 
@@ -55,6 +239,8 @@ export interface SectionElement {
   type: 'section';
   depth: number;
   sectionId?: string;
+  /** JATS `sec-type` attribute (e.g. `conclusions`). */
+  secType?: string;
   children: [HeadingElement, ...BlockElement[]];
 }
 
@@ -86,7 +272,7 @@ export interface TableElement {
   type: 'table';
   tableId: string;
   label: string;
-  captionTitle: string;
+  captionTitle: InlineNode[];
   /** Table note (`table-wrap-foot` / `attrib`) — rich inline content. */
   attrib: InlineNode[];
   /** Snapshot of the original `<table>` (preserves thead/tbody, rowspan/colspan…); only
@@ -101,7 +287,7 @@ export interface FigureElement {
   type: 'figure';
   figureId: string;
   label: string;
-  captionTitle: string;
+  captionTitle: InlineNode[];
   href: string;
   /** Figure note (`attrib`) — rich inline content. */
   attrib: InlineNode[];
@@ -113,6 +299,16 @@ export interface BoxedTextElement {
   children: BlockElement[];
 }
 
+export interface VerseLineElement {
+  type: 'verse-line';
+  children: InlineNode[];
+}
+
+export interface VerseGroupElement {
+  type: 'verse-group';
+  children: VerseLineElement[];
+}
+
 export type BlockElement =
   | ParagraphElement
   | SectionElement
@@ -120,13 +316,15 @@ export type BlockElement =
   | QuoteElement
   | TableElement
   | FigureElement
-  | BoxedTextElement;
+  | BoxedTextElement
+  | VerseGroupElement;
 
 export type CustomElement =
   | BlockElement
   | HeadingElement
   | ListItemElement
   | QuoteAttribElement
+  | VerseLineElement
   | LinkElement
   | XrefElement
   | BreakElement;
@@ -145,6 +343,7 @@ export type BlockKind =
   | 'paragraph'
   | 'section'
   | 'quote'
+  | 'verse-group'
   | 'bulleted-list'
   | 'numbered-list'
   | 'table'
@@ -155,6 +354,7 @@ export const BLOCK_KIND_LABELS: Record<BlockKind, string> = {
   paragraph: 'Parágrafo',
   section: 'Seção',
   quote: 'Citação em bloco',
+  'verse-group': 'Estrofe',
   'bulleted-list': 'Lista com marcadores',
   'numbered-list': 'Lista numerada',
   table: 'Tabela',
@@ -250,6 +450,8 @@ export const setTableHeaderRow = (
 
 export const createEmptyParagraph = (): ParagraphElement => ({ type: 'paragraph', children: [{ text: '' }] });
 
+export const createEmptyVerseLine = (): VerseLineElement => ({ type: 'verse-line', children: [{ text: '' }] });
+
 /** Builds a fresh, empty block of `kind`, used by the slash menu and the "+" button. */
 export const createEmptyBlock = (kind: BlockKind, depth: number): BlockElement => {
   switch (kind) {
@@ -263,6 +465,8 @@ export const createEmptyBlock = (kind: BlockKind, depth: number): BlockElement =
       };
     case 'quote':
       return { type: 'quote', children: [createEmptyParagraph()] };
+    case 'verse-group':
+      return { type: 'verse-group', children: [createEmptyVerseLine()] };
     case 'bulleted-list':
       return { type: 'list', ordered: false, children: [{ type: 'list-item', children: [createEmptyParagraph()] }] };
     case 'numbered-list':
@@ -272,7 +476,7 @@ export const createEmptyBlock = (kind: BlockKind, depth: number): BlockElement =
         type: 'table',
         tableId: '',
         label: '',
-        captionTitle: '',
+        captionTitle: createEmptyInline(),
         attrib: createEmptyInline(),
         tableTemplate: createDefaultTableTemplate(),
         rows: [[createEmptyInline()]],
@@ -283,7 +487,7 @@ export const createEmptyBlock = (kind: BlockKind, depth: number): BlockElement =
         type: 'figure',
         figureId: '',
         label: '',
-        captionTitle: '',
+        captionTitle: createEmptyInline(),
         href: '',
         attrib: createEmptyInline(),
         children: [{ text: '' }],
@@ -308,8 +512,13 @@ const deserializeBlockList = (container: Element, depth: number): BlockElement[]
 
 const deserializeBlock = (el: Element, depth: number): BlockElement | null => {
   switch (el.tagName.toLowerCase()) {
-    case 'p':
+    case 'p': {
+      const figEl = isParagraphWithSingleFig(el);
+      if (figEl) {
+        return deserializeFigure(figEl);
+      }
       return { type: 'paragraph', children: deserializeInline(el.childNodes) };
+    }
     case 'sec':
       return deserializeSection(el, depth);
     case 'disp-quote':
@@ -322,9 +531,23 @@ const deserializeBlock = (el: Element, depth: number): BlockElement | null => {
       return deserializeList(el);
     case 'boxed-text':
       return { type: 'boxed-text', children: deserializeBlockList(el, depth) };
+    case 'verse-group':
+      return deserializeVerseGroup(el);
     default:
       return null;
   }
+};
+
+const deserializeVerseGroup = (el: Element): VerseGroupElement => {
+  const lineEls = directChildren(el, 'verse-line');
+  const children =
+    lineEls.length > 0
+      ? lineEls.map((line) => ({
+          type: 'verse-line' as const,
+          children: deserializeInline(line.childNodes),
+        }))
+      : [createEmptyVerseLine()];
+  return { type: 'verse-group', children };
 };
 
 const deserializeSection = (el: Element, depth: number): SectionElement => {
@@ -338,6 +561,7 @@ const deserializeSection = (el: Element, depth: number): SectionElement => {
     type: 'section',
     depth,
     sectionId: el.getAttribute('id') || undefined,
+    secType: el.getAttribute('sec-type') || undefined,
     children: [heading, ...deserializeBlockList(el, depth + 1)],
   };
 };
@@ -377,7 +601,7 @@ const deserializeTable = (el: Element): TableElement => {
     type: 'table',
     tableId: el.getAttribute('id') || '',
     label: labelEl?.textContent || '',
-    captionTitle: captionTitleEl?.textContent || '',
+    captionTitle: captionTitleEl ? deserializeInline(captionTitleEl.childNodes) : createEmptyInline(),
     attrib: attribEl ? deserializeInline(attribEl.childNodes) : createEmptyInline(),
     tableTemplate: (table ?? createDefaultTableTemplate()).cloneNode(true) as Element,
     rows: rows.length > 0 ? rows : [[createEmptyInline()]],
@@ -399,7 +623,7 @@ const deserializeFigure = (el: Element): FigureElement => {
     type: 'figure',
     figureId: el.getAttribute('id') || '',
     label: labelEl?.textContent || '',
-    captionTitle: captionTitleEl?.textContent || '',
+    captionTitle: captionTitleEl ? deserializeInline(captionTitleEl.childNodes) : createEmptyInline(),
     href,
     attrib: attribEl ? deserializeInline(attribEl.childNodes) : createEmptyInline(),
     children: [{ text: '' }],
@@ -427,8 +651,11 @@ const serializeBlock = (node: BlockElement, doc: Document): Node | null => {
       return serializeQuote(node, doc);
     case 'table':
       return serializeTable(node, doc);
-    case 'figure':
-      return serializeFigure(node, doc);
+    case 'figure': {
+      const p = doc.createElement('p');
+      p.appendChild(serializeFigureElement(node, doc));
+      return p;
+    }
     case 'list':
       return serializeList(node, doc);
     case 'boxed-text': {
@@ -436,15 +663,30 @@ const serializeBlock = (node: BlockElement, doc: Document): Node | null => {
       serializeBody(node.children, doc).forEach((child) => el.appendChild(child));
       return el;
     }
+    case 'verse-group':
+      return serializeVerseGroup(node, doc);
     default:
       return null;
   }
+};
+
+const serializeVerseGroup = (node: VerseGroupElement, doc: Document): Element => {
+  const el = doc.createElement('verse-group');
+  node.children.forEach((line) => {
+    const lineEl = doc.createElement('verse-line');
+    serializeInline(line.children, doc).forEach((child) => lineEl.appendChild(child));
+    el.appendChild(lineEl);
+  });
+  return el;
 };
 
 const serializeSection = (node: SectionElement, doc: Document): Element => {
   const el = doc.createElement('sec');
   if (node.sectionId) {
     el.setAttribute('id', node.sectionId);
+  }
+  if (node.secType) {
+    el.setAttribute('sec-type', node.secType);
   }
 
   // Defensive: `withSections`' `normalizeNode` guarantees `children[0]` is always the
@@ -498,18 +740,16 @@ const serializeList = (node: ListElement, doc: Document): Element => {
 
 const serializeTable = (node: TableElement, doc: Document): Element => {
   const wrap = doc.createElement('table-wrap');
-  if (node.tableId) {
-    wrap.setAttribute('id', node.tableId);
-  }
+  wrap.setAttribute('id', node.tableId || nextFreeId(doc, 'T'));
   if (node.label.trim()) {
     const label = doc.createElement('label');
     label.textContent = node.label;
     wrap.appendChild(label);
   }
-  if (node.captionTitle.trim()) {
+  if (!isInlineEmpty(node.captionTitle)) {
     const caption = doc.createElement('caption');
     const title = doc.createElement('title');
-    title.textContent = node.captionTitle;
+    serializeInline(node.captionTitle, doc).forEach((child) => title.appendChild(child));
     caption.appendChild(title);
     wrap.appendChild(caption);
   }
@@ -534,20 +774,18 @@ const serializeTable = (node: TableElement, doc: Document): Element => {
   return wrap;
 };
 
-const serializeFigure = (node: FigureElement, doc: Document): Element => {
+const serializeFigureElement = (node: FigureElement, doc: Document): Element => {
   const el = doc.createElement('fig');
-  if (node.figureId) {
-    el.setAttribute('id', node.figureId);
-  }
+  el.setAttribute('id', node.figureId || nextFreeId(doc, 'F'));
   if (node.label.trim()) {
     const label = doc.createElement('label');
     label.textContent = node.label;
     el.appendChild(label);
   }
-  if (node.captionTitle.trim()) {
+  if (!isInlineEmpty(node.captionTitle)) {
     const caption = doc.createElement('caption');
     const title = doc.createElement('title');
-    title.textContent = node.captionTitle;
+    serializeInline(node.captionTitle, doc).forEach((child) => title.appendChild(child));
     caption.appendChild(title);
     el.appendChild(caption);
   }
