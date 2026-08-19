@@ -11,7 +11,7 @@ import {
   setPlainText,
   XrefTarget,
 } from './domMutations';
-import { InlineRichEditor } from './InlineRichEditor';
+import { FootnoteContentEditor } from './FootnoteContentEditor';
 import { AddButton, FieldGroup, ItemCard, ItemToolbar, LabeledInput } from './fieldUi';
 
 interface FieldsProps {
@@ -63,7 +63,6 @@ const NoteRow: React.FC<{ fn: Element; doc: Document; commit: () => void; xrefTa
   xrefTargets,
 }) => {
   const labelEl = ensureChild(fn, 'label');
-  const contentEl = ensureChild(fn, 'p');
   const id = fn.getAttribute('id') || '';
 
   const handleRemove = () => {
@@ -99,14 +98,7 @@ const NoteRow: React.FC<{ fn: Element; doc: Document; commit: () => void; xrefTa
           </Flex>
           <ItemToolbar onRemove={handleRemove} removeLabel="Remover nota" />
         </Flex>
-        <InlineRichEditor
-          key={getElementKey(contentEl)}
-          doc={doc}
-          initialNodes={contentEl.childNodes}
-          onChange={(nodes) => contentEl.replaceChildren(...nodes)}
-          onBlur={commit}
-          xrefTargets={xrefTargets}
-        />
+        <FootnoteContentEditor fn={fn} doc={doc} onBlur={commit} xrefTargets={xrefTargets} />
       </Flex>
     </ItemCard>
   );

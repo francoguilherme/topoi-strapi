@@ -1,3 +1,5 @@
+// DEPRECATED
+
 import * as React from 'react';
 import { Box, Flex, Typography } from '@strapi/design-system';
 import styled from 'styled-components';

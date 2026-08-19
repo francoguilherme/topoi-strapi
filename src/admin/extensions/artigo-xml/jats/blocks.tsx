@@ -7,6 +7,8 @@ import {
   Blockquote,
   CaptionHeading,
   FigureWrapper,
+  ListBlock,
+  ListItem,
   SectionHeading,
   TableWrapper,
   VerseGroup,
@@ -26,12 +28,20 @@ const BLOCK_TAGS = new Set([
 
 const directChild = (el: Element, tagName: string): Element | null => {
   for (const child of Array.from(el.children)) {
-    if (child.tagName.toLowerCase() === tagName) {
+    if (localTag(child) === tagName) {
       return child;
     }
   }
   return null;
 };
+
+const localTag = (el: Element): string => (el.localName || el.tagName).toLowerCase();
+
+const paragraphNestedBlockChildren = (el: Element): Element[] =>
+  Array.from(el.children).filter((child) => {
+    const tag = localTag(child);
+    return BLOCK_TAGS.has(tag) && tag !== 'p';
+  });
 
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 
@@ -79,17 +89,69 @@ export const renderBlockNodes = (
 
 /** Renders the content of a cell/item that may hold either inline text or block content. */
 const renderMixedContent = (el: Element, keyPrefix: string, depth: number): React.ReactNode => {
-  const hasBlockChild = Array.from(el.children).some((child) =>
-    BLOCK_TAGS.has(child.tagName.toLowerCase())
-  );
+  const hasBlockChild = paragraphNestedBlockChildren(el).length > 0;
 
   return hasBlockChild
     ? renderBlockNodes(el.childNodes, keyPrefix, depth)
     : renderInlineNodes(el.childNodes, keyPrefix);
 };
 
+/** Renders a `<p>` that may contain block-level children such as `<list>`. */
+const renderParagraphContent = (el: Element, key: string, depth: number): React.ReactNode => {
+  const figEl = singleFigChild(el);
+  if (figEl) {
+    return <Figure key={key} el={figEl} keyPrefix={key} />;
+  }
+
+  if (paragraphNestedBlockChildren(el).length === 0) {
+    return <p key={key}>{renderInlineNodes(el.childNodes, key)}</p>;
+  }
+
+  const parts: React.ReactNode[] = [];
+  let inlineNodes: ChildNode[] = [];
+  let partIndex = 0;
+
+  const flushInline = () => {
+    const hasContent = inlineNodes.some(
+      (node) =>
+        (node.nodeType === Node.TEXT_NODE && node.textContent?.trim()) ||
+        node.nodeType === Node.ELEMENT_NODE
+    );
+    if (hasContent) {
+      parts.push(
+        <p key={`${key}-p-${partIndex}`}>{renderInlineNodes(inlineNodes, `${key}-p-${partIndex}`)}</p>
+      );
+      partIndex += 1;
+    }
+    inlineNodes = [];
+  };
+
+  for (const node of Array.from(el.childNodes)) {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const child = node as Element;
+      const tag = localTag(child);
+      if (BLOCK_TAGS.has(tag) && tag !== 'p') {
+        flushInline();
+        const rendered = renderBlockElement(child, `${key}-blk-${partIndex}`, depth);
+        if (rendered !== null) {
+          parts.push(rendered);
+          partIndex += 1;
+        }
+        continue;
+      }
+    }
+    inlineNodes.push(node);
+  }
+  flushInline();
+
+  if (parts.length === 1) {
+    return parts[0];
+  }
+  return <React.Fragment key={key}>{parts}</React.Fragment>;
+};
+
 const renderBlockElement = (el: Element, key: string, depth: number): React.ReactNode => {
-  const tag = el.tagName.toLowerCase();
+  const tag = localTag(el);
 
   switch (tag) {
     // Consumed by their parent element when it renders itself; skip if
@@ -101,13 +163,8 @@ const renderBlockElement = (el: Element, key: string, depth: number): React.Reac
     case 'attrib':
       return null;
 
-    case 'p': {
-      const figEl = singleFigChild(el);
-      if (figEl) {
-        return <Figure key={key} el={figEl} keyPrefix={key} />;
-      }
-      return <p key={key}>{renderInlineNodes(el.childNodes, key)}</p>;
-    }
+    case 'p':
+      return renderParagraphContent(el, key, depth);
 
     case 'sec':
       return <Section key={key} el={el} keyPrefix={key} depth={depth} />;
@@ -129,6 +186,7 @@ const renderBlockElement = (el: Element, key: string, depth: number): React.Reac
       return <BoxedText key={key}>{renderBlockNodes(el.childNodes, key, depth)}</BoxedText>;
 
     case 'verse-group': {
+      const attrib = directChild(el, 'attrib');
       const lines = Array.from(el.children).filter(
         (child) => child.tagName.toLowerCase() === 'verse-line'
       );
@@ -142,20 +200,27 @@ const renderBlockElement = (el: Element, key: string, depth: number): React.Reac
               {renderInlineNodes(line.childNodes, `${key}-vl-${index}`)}
             </VerseLine>
           ))}
+          {attrib && <AttribText>{renderInlineNodes(attrib.childNodes, `${key}-attrib`)}</AttribText>}
         </VerseGroup>
       );
     }
 
     case 'list': {
-      const ordered = (el.getAttribute('list-type') || '').toLowerCase() === 'order';
-      const items = Array.from(el.children).filter((c) => c.tagName.toLowerCase() === 'list-item');
-      const ListTag = ordered ? 'ol' : 'ul';
+      const bulleted = (el.getAttribute('list-type') || '').toLowerCase() === 'bullet';
+      const items = Array.from(el.children).filter((c) => localTag(c) === 'list-item');
       return (
-        <ListTag key={key}>
-          {items.map((item, index) => (
-            <li key={`${key}-li-${index}`}>{renderMixedContent(item, `${key}-li-${index}`, depth)}</li>
-          ))}
-        </ListTag>
+        <ListBlock key={key} $bulleted={bulleted}>
+          {items.map((item, index) => {
+            const pEl = directChild(item, 'p');
+            return (
+              <ListItem key={`${key}-li-${index}`}>
+                {pEl
+                  ? renderInlineNodes(pEl.childNodes, `${key}-li-${index}`)
+                  : renderMixedContent(item, `${key}-li-${index}`, depth)}
+              </ListItem>
+            );
+          })}
+        </ListBlock>
       );
     }
 
@@ -168,9 +233,7 @@ const renderBlockElement = (el: Element, key: string, depth: number): React.Reac
     default: {
       // Unknown element: if it wraps recognizable block content, unwrap it;
       // otherwise treat it as a paragraph so nothing is silently dropped.
-      const hasBlockChild = Array.from(el.children).some((child) =>
-        BLOCK_TAGS.has(child.tagName.toLowerCase())
-      );
+      const hasBlockChild = paragraphNestedBlockChildren(el).length > 0;
       if (hasBlockChild) {
         return <React.Fragment key={key}>{renderBlockNodes(el.childNodes, key, depth)}</React.Fragment>;
       }

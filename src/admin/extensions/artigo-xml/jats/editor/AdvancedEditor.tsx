@@ -31,6 +31,7 @@ import { InlineRichEditor } from './InlineRichEditor';
 import { InlineNode, InlineContentPreview, renderInlineElement, renderInlineLeaf, withInlines } from './inlineModel';
 import { withQuotes } from './quoteEditing';
 import { handleSectionTabKey, withSections } from './sectionEditing';
+import { isInsideListItem, withLists } from './listEditing';
 import { isInsideQuote, SlashMenuList, SLASH_TRIGGER_TYPES, useSlashMenu } from './SlashMenu';
 import { isInsideVerseGroup, withVerses } from './verseEditing';
 import { useArticleDocument } from './useArticleDocument';
@@ -42,6 +43,8 @@ import {
   BoxedText,
   CaptionHeading,
   FigureWrapper,
+  ListBlock,
+  ListItem,
   SectionHeading,
   TableWrapper,
   VerseGroup,
@@ -64,6 +67,8 @@ const EMPTY_BLOCK_PLACEHOLDER = "Pressione '/' para adicionar um bloco";
 const SECTION_TITLE_PLACEHOLDER = 'Título da seção';
 const SECTION_CONTENT_PLACEHOLDER = 'Conteúdo da seção';
 const VERSE_LINE_PLACEHOLDER = 'Verso';
+const VERSE_ATTRIB_PLACEHOLDER = 'Atribuição';
+const LIST_ITEM_PLACEHOLDER = 'Item da lista';
 
 const getEmptyBlockPlaceholder = (editor: Editor, parentPath: Path): string | null => {
   let parent;
@@ -84,6 +89,9 @@ const getEmptyBlockPlaceholder = (editor: Editor, parentPath: Path): string | nu
     if (isInsideQuote(editor, parentPath)) {
       return null;
     }
+    if (isInsideListItem(editor, parentPath)) {
+      return LIST_ITEM_PLACEHOLDER;
+    }
     const grandparentPath = Path.parent(parentPath);
     try {
       const [grandparent] = Editor.node(editor, grandparentPath);
@@ -97,6 +105,10 @@ const getEmptyBlockPlaceholder = (editor: Editor, parentPath: Path): string | nu
 
   if (parent.type === 'verse-line') {
     return VERSE_LINE_PLACEHOLDER;
+  }
+
+  if (parent.type === 'verse-attrib') {
+    return VERSE_ATTRIB_PLACEHOLDER;
   }
 
   if (SLASH_TRIGGER_TYPES.has(parent.type)) {
@@ -120,7 +132,7 @@ interface AdvancedEditorProps {
 export const AdvancedEditor: React.FC<AdvancedEditorProps> = ({ xml, onChange }) => {
   const { doc, commit } = useArticleDocument(xml, onChange);
   const editor = React.useMemo(
-    () => withVerses(withQuotes(withSections(withInlines(withHistory(withReact(createEditor())))))),
+    () => withLists(withVerses(withQuotes(withSections(withInlines(withHistory(withReact(createEditor()))))))),
     []
   );
   const [initialValue] = React.useState<BlockElement[]>(() => deserializeBody(ensureBody(doc.documentElement)));
@@ -362,7 +374,6 @@ const CHROME_TYPES = new Set([
   'verse-group',
   'boxed-text',
   'list',
-  'list-item',
   'table',
   'figure',
 ]);
@@ -385,6 +396,7 @@ const BlockElementView: React.FC<BlockElementViewProps> = (props) => {
   const withChrome =
     CHROME_TYPES.has(element.type) &&
     !(element.type === 'paragraph' && path !== null && isInsideQuote(editor, path)) &&
+    !(element.type === 'paragraph' && path !== null && isInsideListItem(editor, path)) &&
     !(element.type === 'verse-line' && path !== null && isInsideVerseGroup(editor, path));
   // Chrome types get their tag rendered *without* Slate's `attributes` — `BlockChrome`
   // takes ownership of `attributes` on its own outer wrapper instead (see below).
@@ -408,13 +420,15 @@ const BlockElementView: React.FC<BlockElementViewProps> = (props) => {
       case 'section':
         return <SectionBlock {...chromeAttributes}>{children}</SectionBlock>;
 
-      case 'list': {
-        const ListTag = element.ordered ? 'ol' : 'ul';
-        return <ListTag {...chromeAttributes}>{children}</ListTag>;
-      }
+      case 'list':
+        return (
+          <ListBlock $bulleted={element.listType === 'bullet'} {...chromeAttributes}>
+            {children}
+          </ListBlock>
+        );
 
       case 'list-item':
-        return <li {...chromeAttributes}>{children}</li>;
+        return <ListItem {...attributes}>{children}</ListItem>;
 
       case 'quote':
         return <QuoteBlock {...chromeAttributes}>{children}</QuoteBlock>;
@@ -430,6 +444,9 @@ const BlockElementView: React.FC<BlockElementViewProps> = (props) => {
         );
 
       case 'quote-attrib':
+        return <AttribText {...attributes}>{children}</AttribText>;
+
+      case 'verse-attrib':
         return <AttribText {...attributes}>{children}</AttribText>;
 
       case 'boxed-text':

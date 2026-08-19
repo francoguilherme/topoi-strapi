@@ -12,6 +12,7 @@ import styled from 'styled-components';
 
 import { BLOCK_KIND_LABELS, BlockElement, BlockKind, createEmptyBlock, SectionElement } from './advancedBlocks';
 import { useArtigoXmlViewportScrollLock } from './useArtigoXmlViewportScrollLock';
+import { isInsideListItem } from './listEditing';
 import { isInsideVerseGroup } from './verseEditing';
 
 const SLASH_TRIGGER_TYPES = new Set(['paragraph']);
@@ -34,12 +35,12 @@ export const isInsideQuote = (editor: Editor, path: Path): boolean => {
 const BLOCK_KIND_ORDER: BlockKind[] = [
   //'paragraph',
   'section',
-  //'bulleted-list',
-  //'numbered-list',
   'quote',
-  'verse-group',
-  'table',
   'figure',
+  'table',
+  'verse-group',
+  'simple-list',
+  'bulleted-list',
   //'boxed-text',
 ];
 
@@ -77,6 +78,10 @@ const detectSlashTarget = (editor: Editor): SlashTarget | null => {
   if (isInsideVerseGroup(editor, parentPath)) {
     return null;
   }
+  // List items only accept a single paragraph — never open the block palette inside one.
+  if (isInsideListItem(editor, parentPath)) {
+    return null;
+  }
 
   const text = Editor.string(editor, parentPath);
   const match = text.match(/^\/(\S*)$/);
@@ -108,7 +113,8 @@ export interface SlashMenuController {
 
 export const useSlashMenu = (
   editor: Editor,
-  prepareBlock?: (kind: BlockKind, block: BlockElement) => BlockElement
+  prepareBlock?: (kind: BlockKind, block: BlockElement) => BlockElement,
+  kinds: BlockKind[] = BLOCK_KIND_ORDER
 ): SlashMenuController => {
   const [activeIndex, setActiveIndex] = React.useState(0);
   const [dismissedKey, setDismissedKey] = React.useState<string | null>(null);
@@ -122,10 +128,10 @@ export const useSlashMenu = (
     }
     const query = target.search.trim().toLowerCase();
     if (!query) {
-      return BLOCK_KIND_ORDER;
+      return kinds;
     }
-    return BLOCK_KIND_ORDER.filter((kind) => BLOCK_KIND_LABELS[kind].toLowerCase().includes(query));
-  }, [target?.search]);
+    return kinds.filter((kind) => BLOCK_KIND_LABELS[kind].toLowerCase().includes(query));
+  }, [target?.search, kinds]);
 
   React.useEffect(() => {
     setActiveIndex(0);

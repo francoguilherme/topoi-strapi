@@ -88,7 +88,10 @@ export const ensureMediaBlockIds = (blocks: BlockElement[], doc: Document): Bloc
       if (node.type === 'list') {
         return {
           ...node,
-          children: node.children.map((item) => ({ ...item, children: walk(item.children) })),
+          children: node.children.map((item) => ({
+            ...item,
+            children: walk(item.children as BlockElement[]) as ParagraphElement[],
+          })),
         };
       }
       if (node.type === 'quote') {
@@ -217,6 +220,14 @@ const directChild = (el: Element, tag: string): Element | null =>
 const directChildren = (el: Element, tag: string): Element[] =>
   Array.from(el.children).filter((c) => c.tagName.toLowerCase() === tag);
 
+const localTag = (el: Element): string => (el.localName || el.tagName).toLowerCase();
+
+const paragraphNestedBlockChildren = (el: Element): Element[] =>
+  Array.from(el.children).filter((child) => {
+    const tag = localTag(child);
+    return BLOCK_TAGS.has(tag) && tag !== 'p';
+  });
+
 const isInlineEmpty = (nodes: InlineNode[]): boolean =>
   nodes.every((node) => isFormattedText(node) && !node.text.trim());
 
@@ -244,14 +255,16 @@ export interface SectionElement {
   children: [HeadingElement, ...BlockElement[]];
 }
 
+export type ListType = 'simple' | 'bullet';
+
 export interface ListItemElement {
   type: 'list-item';
-  children: BlockElement[];
+  children: ParagraphElement[];
 }
 
 export interface ListElement {
   type: 'list';
-  ordered: boolean;
+  listType: ListType;
   children: ListItemElement[];
 }
 
@@ -304,9 +317,14 @@ export interface VerseLineElement {
   children: InlineNode[];
 }
 
+export interface VerseAttribElement {
+  type: 'verse-attrib';
+  children: InlineNode[];
+}
+
 export interface VerseGroupElement {
   type: 'verse-group';
-  children: VerseLineElement[];
+  children: (VerseLineElement | VerseAttribElement)[];
 }
 
 export type BlockElement =
@@ -325,6 +343,7 @@ export type CustomElement =
   | ListItemElement
   | QuoteAttribElement
   | VerseLineElement
+  | VerseAttribElement
   | LinkElement
   | XrefElement
   | BreakElement;
@@ -344,8 +363,8 @@ export type BlockKind =
   | 'section'
   | 'quote'
   | 'verse-group'
+  | 'simple-list'
   | 'bulleted-list'
-  | 'numbered-list'
   | 'table'
   | 'figure'
   | 'boxed-text';
@@ -355,8 +374,8 @@ export const BLOCK_KIND_LABELS: Record<BlockKind, string> = {
   section: 'Seção',
   quote: 'Citação em bloco',
   'verse-group': 'Estrofe',
+  'simple-list': 'Lista simples',
   'bulleted-list': 'Lista com marcadores',
-  'numbered-list': 'Lista numerada',
   table: 'Tabela',
   figure: 'Figura',
   'boxed-text': 'Quadro destacado',
@@ -467,10 +486,10 @@ export const createEmptyBlock = (kind: BlockKind, depth: number): BlockElement =
       return { type: 'quote', children: [createEmptyParagraph()] };
     case 'verse-group':
       return { type: 'verse-group', children: [createEmptyVerseLine()] };
+    case 'simple-list':
+      return { type: 'list', listType: 'simple', children: [{ type: 'list-item', children: [createEmptyParagraph()] }] };
     case 'bulleted-list':
-      return { type: 'list', ordered: false, children: [{ type: 'list-item', children: [createEmptyParagraph()] }] };
-    case 'numbered-list':
-      return { type: 'list', ordered: true, children: [{ type: 'list-item', children: [createEmptyParagraph()] }] };
+      return { type: 'list', listType: 'bullet', children: [{ type: 'list-item', children: [createEmptyParagraph()] }] };
     case 'table':
       return {
         type: 'table',
@@ -501,12 +520,66 @@ export const createEmptyBlock = (kind: BlockKind, depth: number): BlockElement =
 
 // --- Deserialize: JATS DOM -> Slate value --------------------------------------------
 
+/** Expands a `<p>` that may wrap block elements (e.g. `<p><list>…</list></p>`) into blocks. */
+const deserializeParagraphOrBlocks = (el: Element, depth: number): BlockElement[] => {
+  const figEl = isParagraphWithSingleFig(el);
+  if (figEl) {
+    return [deserializeFigure(figEl)];
+  }
+
+  if (paragraphNestedBlockChildren(el).length === 0) {
+    return [{ type: 'paragraph', children: deserializeInline(el.childNodes) }];
+  }
+
+  const blocks: BlockElement[] = [];
+  let pendingInline: ChildNode[] = [];
+
+  const flushInline = () => {
+    const hasContent = pendingInline.some(
+      (node) =>
+        (node.nodeType === Node.TEXT_NODE && node.textContent?.trim()) ||
+        node.nodeType === Node.ELEMENT_NODE
+    );
+    if (hasContent) {
+      blocks.push({ type: 'paragraph', children: deserializeInline(pendingInline) });
+    }
+    pendingInline = [];
+  };
+
+  for (const node of Array.from(el.childNodes)) {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const child = node as Element;
+      const tag = localTag(child);
+      if (BLOCK_TAGS.has(tag) && tag !== 'p') {
+        flushInline();
+        const block = deserializeBlock(child, depth);
+        if (block) {
+          blocks.push(block);
+        }
+        continue;
+      }
+    }
+    pendingInline.push(node);
+  }
+  flushInline();
+
+  return blocks.length > 0 ? blocks : [{ type: 'paragraph', children: deserializeInline(el.childNodes) }];
+};
+
 /** Deserializes any container's direct block children (body/boxed-text/list-item). */
 const deserializeBlockList = (container: Element, depth: number): BlockElement[] => {
-  const blocks = Array.from(container.children)
-    .filter((c) => BLOCK_TAGS.has(c.tagName.toLowerCase()))
-    .map((el) => deserializeBlock(el, depth))
-    .filter((b): b is BlockElement => b !== null);
+  const blocks: BlockElement[] = [];
+  for (const child of Array.from(container.children)) {
+    const tag = localTag(child);
+    if (tag === 'p') {
+      blocks.push(...deserializeParagraphOrBlocks(child, depth));
+    } else if (BLOCK_TAGS.has(tag)) {
+      const block = deserializeBlock(child, depth);
+      if (block) {
+        blocks.push(block);
+      }
+    }
+  }
   return blocks.length > 0 ? blocks : [createEmptyParagraph()];
 };
 
@@ -540,13 +613,17 @@ const deserializeBlock = (el: Element, depth: number): BlockElement | null => {
 
 const deserializeVerseGroup = (el: Element): VerseGroupElement => {
   const lineEls = directChildren(el, 'verse-line');
-  const children =
+  const children: (VerseLineElement | VerseAttribElement)[] =
     lineEls.length > 0
       ? lineEls.map((line) => ({
           type: 'verse-line' as const,
           children: deserializeInline(line.childNodes),
         }))
       : [createEmptyVerseLine()];
+  const attrib = directChild(el, 'attrib');
+  if (attrib) {
+    children.push({ type: 'verse-attrib', children: deserializeInline(attrib.childNodes) });
+  }
   return { type: 'verse-group', children };
 };
 
@@ -575,14 +652,21 @@ const deserializeQuote = (el: Element): QuoteElement => {
   return { type: 'quote', children };
 };
 
+const deserializeListItem = (item: Element): ListItemElement => {
+  const pEl = directChild(item, 'p');
+  const paragraph: ParagraphElement = pEl
+    ? { type: 'paragraph', children: deserializeInline(pEl.childNodes) }
+    : createEmptyParagraph();
+  return { type: 'list-item', children: [paragraph] };
+};
+
 const deserializeList = (el: Element): ListElement => {
-  const ordered = (el.getAttribute('list-type') || '').toLowerCase() === 'order';
+  const rawType = (el.getAttribute('list-type') || '').toLowerCase();
+  const listType: ListType = rawType === 'bullet' ? 'bullet' : 'simple';
   const itemEls = directChildren(el, 'list-item');
   const items: ListItemElement[] =
-    itemEls.length > 0
-      ? itemEls.map((item) => ({ type: 'list-item' as const, children: deserializeBlockList(item, 2) }))
-      : [{ type: 'list-item', children: [createEmptyParagraph()] }];
-  return { type: 'list', ordered, children: items };
+    itemEls.length > 0 ? itemEls.map(deserializeListItem) : [{ type: 'list-item', children: [createEmptyParagraph()] }];
+  return { type: 'list', listType, children: items };
 };
 
 const deserializeTable = (el: Element): TableElement => {
@@ -633,6 +717,40 @@ const deserializeFigure = (el: Element): FigureElement => {
 /** Deserializes an article's `<body>` element into the advanced editor's Slate value. */
 export const deserializeBody = (bodyEl: Element): BlockElement[] => deserializeBlockList(bodyEl, 2);
 
+/** Block tags allowed as direct children of `<fn>` (footnote body). */
+export const FN_BLOCK_TAGS = new Set(['p', 'list']);
+
+/** Block kinds insertable in footnote content via slash menu. */
+export type FootnoteBlockKind = 'simple-list' | 'bulleted-list';
+
+export const FOOTNOTE_BLOCK_KINDS: FootnoteBlockKind[] = ['simple-list', 'bulleted-list'];
+
+/** Deserializes a footnote's block content (`<p>` and `<list>` only, excluding `<label>`). */
+export const deserializeFnContent = (fn: Element): BlockElement[] => {
+  const blocks: BlockElement[] = [];
+  for (const child of Array.from(fn.children)) {
+    const tag = localTag(child);
+    if (tag === 'label') {
+      continue;
+    }
+    if (tag === 'p') {
+      blocks.push(...deserializeParagraphOrBlocks(child, 2));
+    } else if (tag === 'list') {
+      blocks.push(deserializeList(child));
+    }
+  }
+  return blocks.length > 0 ? blocks : [createEmptyParagraph()];
+};
+
+/** Replaces a footnote's block content while preserving its `<label>`. */
+export const replaceFnContent = (fn: Element, blocks: BlockElement[], doc: Document): void => {
+  const label = directChild(fn, 'label');
+  const content = blocks
+    .filter((b): b is ParagraphElement | ListElement => b.type === 'paragraph' || b.type === 'list')
+    .flatMap((node) => serializeBody([node], doc));
+  fn.replaceChildren(...(label ? [label] : []), ...content);
+};
+
 // --- Serialize: Slate value -> JATS DOM ----------------------------------------------
 
 export const serializeBody = (nodes: BlockElement[], doc: Document): Node[] =>
@@ -672,11 +790,21 @@ const serializeBlock = (node: BlockElement, doc: Document): Node | null => {
 
 const serializeVerseGroup = (node: VerseGroupElement, doc: Document): Element => {
   const el = doc.createElement('verse-group');
-  node.children.forEach((line) => {
-    const lineEl = doc.createElement('verse-line');
-    serializeInline(line.children, doc).forEach((child) => lineEl.appendChild(child));
-    el.appendChild(lineEl);
-  });
+  node.children
+    .filter((child): child is VerseLineElement => child.type === 'verse-line')
+    .forEach((line) => {
+      const lineEl = doc.createElement('verse-line');
+      serializeInline(line.children, doc).forEach((child) => lineEl.appendChild(child));
+      el.appendChild(lineEl);
+    });
+  const attribNode = node.children.find(
+    (child): child is VerseAttribElement => child.type === 'verse-attrib'
+  );
+  if (attribNode && !isInlineEmpty(attribNode.children)) {
+    const attrib = doc.createElement('attrib');
+    serializeInline(attribNode.children, doc).forEach((child) => attrib.appendChild(child));
+    el.appendChild(attrib);
+  }
   return el;
 };
 
@@ -729,10 +857,13 @@ const serializeQuote = (node: QuoteElement, doc: Document): Element => {
 
 const serializeList = (node: ListElement, doc: Document): Element => {
   const el = doc.createElement('list');
-  el.setAttribute('list-type', node.ordered ? 'order' : 'bullet');
+  el.setAttribute('list-type', node.listType);
   node.children.forEach((item) => {
     const itemEl = doc.createElement('list-item');
-    serializeBody(item.children, doc).forEach((child) => itemEl.appendChild(child));
+    const paragraph = item.children[0] ?? createEmptyParagraph();
+    const p = doc.createElement('p');
+    serializeInline(paragraph.children, doc).forEach((child) => p.appendChild(child));
+    itemEl.appendChild(p);
     el.appendChild(itemEl);
   });
   return el;

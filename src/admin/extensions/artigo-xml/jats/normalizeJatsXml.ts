@@ -111,6 +111,28 @@ const normalizeWhitespace = (node: Node, preserveWhitespace: boolean): void => {
   }
 };
 
+/** Wraps `<xref ref-type="fn">` content in `<sup>` when not already present. */
+const wrapFnXrefsWithSup = (doc: Document): void => {
+  Array.from(doc.getElementsByTagName('xref')).forEach((xref) => {
+    if (xref.getAttribute('ref-type') !== 'fn') {
+      return;
+    }
+
+    const hasDirectSup = Array.from(xref.childNodes).some(
+      (node) => node.nodeType === Node.ELEMENT_NODE && (node as Element).tagName.toLowerCase() === 'sup'
+    );
+    if (hasDirectSup) {
+      return;
+    }
+
+    const sup = doc.createElement('sup');
+    while (xref.firstChild) {
+      sup.appendChild(xref.firstChild);
+    }
+    xref.appendChild(sup);
+  });
+};
+
 const usesBlockContainerLayout = (el: Element): boolean =>
   BLOCK_CONTAINER_TAGS.has(el.tagName.toLowerCase());
 
@@ -162,6 +184,7 @@ export const normalizeJatsXml = (raw: string): string => {
   const header = extractXmlHeader(raw);
   const doc = parseJatsXml(raw);
 
+  wrapFnXrefsWithSup(doc);
   normalizeWhitespace(doc.documentElement, false);
 
   const body = prettyPrintElement(doc.documentElement, 0);

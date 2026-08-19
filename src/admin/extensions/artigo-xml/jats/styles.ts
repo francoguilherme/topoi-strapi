@@ -166,6 +166,39 @@ export const VerseLine = styled.div`
   white-space: pre-wrap;
 `;
 
+export const ListBlock = styled.ul<{ $bulleted?: boolean }>`
+  margin: 1em 0;
+  padding-left: 2em;
+  list-style: none;
+  text-align: left;
+
+  & > li {
+    margin: 0.25em 0;
+    position: relative;
+    text-align: left;
+  }
+
+  ${({ $bulleted }) =>
+    $bulleted
+      ? `
+    & > li {
+      padding-left: 0.25em;
+    }
+
+    & > li::before {
+      content: '•';
+      position: absolute;
+      left: -1em;
+    }
+  `
+      : ''}
+`;
+
+export const ListItem = styled.li`
+  margin: 0.25em 0;
+  text-align: left;
+`;
+
 export const BoxedText = styled.div`
   margin: 1em 0;
   padding: 1em 1.25em;
@@ -242,6 +275,18 @@ export const FootnoteEntry = styled.div`
   p {
     text-align: left;
     margin: 0;
+  }
+
+  > div {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+  }
+
+  ${ListBlock} {
+    margin: 0.35em 0;
+    padding-left: 1.5em;
+    font-size: inherit;
   }
 
   &:target {

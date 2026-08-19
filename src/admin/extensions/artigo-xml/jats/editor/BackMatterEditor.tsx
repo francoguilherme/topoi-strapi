@@ -15,6 +15,7 @@ import {
   removeElement,
   XrefTarget,
 } from './domMutations';
+import { FootnoteContentEditor } from './FootnoteContentEditor';
 import { InlineRichEditor } from './InlineRichEditor';
 
 interface BackMatterEditorProps {
@@ -111,7 +112,6 @@ const EditableNoteRow: React.FC<{
   commit: () => void;
   xrefTargets: XrefTarget[];
 }> = ({ fn, index, doc, commit, xrefTargets }) => {
-  const contentEl = ensureChild(fn, 'p');
   const id = fn.getAttribute('id') || '';
 
   const handleRemove = () => {
@@ -136,11 +136,9 @@ const EditableNoteRow: React.FC<{
           <Trash />
         </IconButton>
       </EntryHeader>
-      <InlineRichEditor
-        key={getElementKey(contentEl)}
+      <FootnoteContentEditor
+        fn={fn}
         doc={doc}
-        initialNodes={contentEl.childNodes}
-        onChange={(nodes) => contentEl.replaceChildren(...nodes)}
         onBlur={commit}
         xrefTargets={xrefTargets}
         fontSize="1.5rem"
