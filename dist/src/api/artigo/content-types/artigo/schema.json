@@ -50,6 +50,13 @@
                 "files"
             ]
         },
+        "imagens": {
+            "type": "media",
+            "multiple": true,
+            "allowedTypes": [
+                "images"
+            ]
+        },
         "palavras_chave": {
             "type": "component",
             "component": "simples.texto",

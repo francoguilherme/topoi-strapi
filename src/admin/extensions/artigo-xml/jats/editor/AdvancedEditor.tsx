@@ -37,6 +37,7 @@ import { isInsideVerseGroup, withVerses } from './verseEditing';
 import { useArticleDocument } from './useArticleDocument';
 import { BackMatterEditor } from './BackMatterEditor';
 import { ADVANCED_EDITOR_SECTION, ADVANCED_EDITOR_SECTION_NAV_OFFSET } from './advancedEditorSections';
+import { useFigureHrefResolver } from '../../FigureAssetsContext';
 import {
   ArticleContainer,
   AttribText,
@@ -808,7 +809,10 @@ const FigureBlockView: React.FC<{
   editor: Editor;
   xrefTargets: XrefTarget[];
   children: React.ReactNode;
-}> = ({ attributes, element, editor, xrefTargets, children }) => (
+}> = ({ attributes, element, editor, xrefTargets, children }) => {
+  const resolveHref = useFigureHrefResolver();
+
+  return (
   <div {...attributes} contentEditable={false}>
     <VoidChildren>{children}</VoidChildren>
     <FigureWrapper>
@@ -836,9 +840,9 @@ const FigureBlockView: React.FC<{
           <InlineContentPreview nodes={element.captionTitle} />
         </CaptionHeading>
       )}
-      {element.href && <img src={element.href} alt={element.label || 'Figura'} />}
+      {element.href && <img src={resolveHref(element.href)} alt={element.label || 'Figura'} />}
       <FieldInput
-        placeholder="Arquivo de imagem (nome/URL)"
+        placeholder="Arquivo de imagem (nome no pacote)"
         value={element.href}
         onChange={(e) => updateVoidElement(editor, element, { href: e.target.value })}
       />
@@ -851,7 +855,8 @@ const FigureBlockView: React.FC<{
       />
     </FigureWrapper>
   </div>
-);
+  );
+};
 
 const Flex2 = styled.div<{ gap?: string }>`
   display: flex;

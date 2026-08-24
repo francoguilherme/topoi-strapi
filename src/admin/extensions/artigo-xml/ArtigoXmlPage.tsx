@@ -19,10 +19,11 @@ import {
   Flex,
   Typography,
 } from '@strapi/design-system';
-import { Check, Code, Download, Eye, ListPlus, Sparkle, Upload } from '@strapi/icons';
+import { Check, Code, Download, Eye, Images, ListPlus, Sparkle, Upload } from '@strapi/icons';
 
 import { ARTIGO_MODEL_UID, getArtigoEditPath } from './constants';
 import { ArtigoXmlNavigationContext } from './ArtigoXmlNavigationContext';
+import { FigureAssetsProvider } from './FigureAssetsContext';
 import {
   advancedEditorSectionSelector,
   ADVANCED_EDITOR_SECTION_NAV_OFFSET,
@@ -31,6 +32,12 @@ import {
 import { AdvancedEditorSectionNav } from './jats/editor/AdvancedEditorSectionNav';
 import { buildFileUrl, formatBytes, isXmlFile, type ArtigoXmlFile } from './utils';
 import { ArticleRenderer, JatsParseError, parseJatsXml } from './jats/ArticleRenderer';
+import {
+  buildImageMap,
+  extractGraphicHrefs,
+  hrefBasename,
+  matchFolderFiles,
+} from './jats/figureAssets';
 import { normalizeJatsXml } from './jats/normalizeJatsXml';
 import { XmlCodeEditor } from './jats/XmlCodeEditor';
 import { StructuredEditor } from './jats/editor/StructuredEditor';
@@ -41,11 +48,12 @@ interface ArtigoData {
   documentId: string;
   titulo: string;
   xml: ArtigoXmlFile | null;
+  imagens: ArtigoXmlFile[] | null;
 }
 
 export const ArtigoXmlPage = () => {
   const { documentId } = useParams<{ documentId: string }>();
-  const { get, post, del } = useFetchClient();
+  const { get, post } = useFetchClient();
   const { update } = unstable_useDocumentActions();
   const { toggleNotification } = useNotification();
   const { formatAPIError } = useAPIErrorHandler();
@@ -54,6 +62,9 @@ export const ArtigoXmlPage = () => {
   const [isLoading, setIsLoading] = React.useState(true);
   const [hasError, setHasError] = React.useState(false);
   const [isUploading, setIsUploading] = React.useState(false);
+  const [isUploadingImages, setIsUploadingImages] = React.useState(false);
+  const [isOrganizing, setIsOrganizing] = React.useState(false);
+  const [isDownloadingPackage, setIsDownloadingPackage] = React.useState(false);
   const [isContentLoading, setIsContentLoading] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
   const [saveError, setSaveError] = React.useState<string | null>(null);
@@ -66,6 +77,7 @@ export const ArtigoXmlPage = () => {
   const [editorRevision, setEditorRevision] = React.useState(0);
   const [pendingFileName, setPendingFileName] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const imagesInputRef = React.useRef<HTMLInputElement>(null);
   const loadedXmlIdRef = React.useRef<number | null>(null);
   const viewportRef = React.useRef<HTMLDivElement>(null);
   const viewportScrollTopRef = React.useRef(0);
@@ -150,6 +162,21 @@ export const ArtigoXmlPage = () => {
     }
   }, [draftXml]);
 
+  // Figuras do XML atual e o que já existe na biblioteca para cada uma. O XML
+  // guarda o caminho portátil do pacote SciELO; a correspondência com os
+  // arquivos enviados é feita pelo nome.
+  const graphicHrefs = React.useMemo(
+    () => (draftXml === null ? [] : extractGraphicHrefs(draftXml)),
+    [draftXml]
+  );
+
+  const imageMap = React.useMemo(() => buildImageMap(artigo?.imagens), [artigo?.imagens]);
+
+  const missingHrefs = React.useMemo(
+    () => graphicHrefs.filter((href) => !imageMap.has(hrefBasename(href).toLowerCase())),
+    [graphicHrefs, imageMap]
+  );
+
   const fetchArtigo = React.useCallback(async () => {
     if (!documentId) {
       return;
@@ -159,7 +186,7 @@ export const ArtigoXmlPage = () => {
       setHasError(false);
       const { data } = await get<{ data: ArtigoData }>(
         `/content-manager/collection-types/${ARTIGO_MODEL_UID}/${documentId}`,
-        { params: { populate: 'xml' } }
+        { params: { populate: ['xml', 'imagens'] } }
       );
 
       setArtigo(data.data);
@@ -227,11 +254,11 @@ export const ArtigoXmlPage = () => {
   }, [artigo?.xml, loadXmlContent]);
 
   /**
-   * Uploads `file` and links it as the article's `xml` field, replacing whatever was
-   * there before (and cleaning up the previous file from the media library). Shared by
-   * the "select file" input and by the raw/structured editors' "Salvar" button, which
-   * build a `File` out of the in-memory `draftXml` instead of an actual file picked by
-   * the user. Returns whether the operation succeeded.
+   * Uploads `file` into the article's `xml/{documentId}/` media folder and links it as
+   * the `xml` field, replacing (and deleting) whatever was there before. Shared by the
+   * "select file" input and by the raw/structured editors' "Salvar" button, which build
+   * a `File` out of the in-memory `draftXml` instead of an actual file picked by the
+   * user. Returns whether the operation succeeded.
    */
   const replaceXmlFile = React.useCallback(
     async (file: File): Promise<boolean> => {
@@ -239,40 +266,23 @@ export const ArtigoXmlPage = () => {
         return false;
       }
 
-      const previousFileId = artigo?.xml?.id;
-
       try {
         const formData = new FormData();
         formData.append('files', file);
+        formData.append('fileName', file.name);
 
-        const { data: uploadedFiles } = await post<Array<{ id: number }>>('/upload', formData);
-        const uploadedFile = uploadedFiles[0];
-
-        // Uses the Content Manager's own document action so its cache is invalidated,
-        // otherwise the article edit view keeps showing the stale xml field on return.
-        const result = await update(
-          { collectionType: 'collection-types', model: ARTIGO_MODEL_UID, documentId },
-          { xml: uploadedFile.id }
+        const { data } = await post<{ data: { xml: { id: number } } }>(
+          `/artigo-xml/${documentId}/xml`,
+          formData
         );
 
-        if (result && 'error' in result) {
-          return false;
-        }
-
-        // The xml field only ever points to a single file, so once the new one is
-        // linked, the previous file becomes orphaned and should be removed instead
-        // of being left behind as a duplicate in the media library.
-        if (previousFileId && previousFileId !== uploadedFile.id) {
-          try {
-            await del(`/upload/files/${previousFileId}`);
-          } catch {
-            toggleNotification({
-              type: 'warning',
-              message:
-                'O novo XML foi vinculado, mas o arquivo anterior não pôde ser removido da biblioteca de mídia.',
-            });
-          }
-        }
+        // The endpoint already linked the file; replaying the same link through the
+        // Content Manager action is what invalidates its cache, otherwise the article
+        // edit view keeps showing the stale xml field on return.
+        await update(
+          { collectionType: 'collection-types', model: ARTIGO_MODEL_UID, documentId },
+          { xml: data.data.xml.id }
+        );
 
         return true;
       } catch (error) {
@@ -283,7 +293,7 @@ export const ArtigoXmlPage = () => {
         return false;
       }
     },
-    [documentId, artigo?.xml?.id, post, update, del, toggleNotification, formatAPIError]
+    [documentId, post, update, toggleNotification, formatAPIError]
   );
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -339,6 +349,136 @@ export const ArtigoXmlPage = () => {
       }
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  /**
+   * Takes the folder the user picked (the SciELO article folder, which also holds
+   * the .xml and may have subfolders), keeps only the images the XML actually
+   * references and uploads them into `xml/{documentId}/`.
+   */
+  const handleImagesFolderChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = '';
+
+    if (files.length === 0 || !documentId) {
+      return;
+    }
+
+    const { matched, missing } = matchFolderFiles(graphicHrefs, files);
+
+    if (matched.length === 0) {
+      toggleNotification({
+        type: 'danger',
+        message: 'Nenhuma das imagens referenciadas pelo XML foi encontrada na pasta selecionada.',
+      });
+      return;
+    }
+
+    setIsUploadingImages(true);
+
+    try {
+      const formData = new FormData();
+      matched.forEach(({ href, file }) => {
+        // Sem o 3º argumento, o multipart pode levar o caminho relativo da pasta
+        // (`artigo/figura.png`) e o Strapi rejeita `/` no nome do arquivo.
+        formData.append('files', file, hrefBasename(href));
+      });
+      formData.append('hrefs', JSON.stringify(graphicHrefs));
+
+      await post(`/artigo-xml/${documentId}/imagens`, formData);
+      await fetchArtigo();
+
+      if (missing.length > 0) {
+        toggleNotification({
+          type: 'warning',
+          message: `${matched.length} imagem(ns) enviada(s). Ainda faltam ${missing.length}: ${missing
+            .slice(0, 3)
+            .join(', ')}${missing.length > 3 ? '…' : ''}`,
+        });
+      } else {
+        toggleNotification({
+          type: 'success',
+          message: `${matched.length} imagem(ns) enviada(s) com sucesso.`,
+        });
+      }
+    } catch (error) {
+      toggleNotification({
+        type: 'danger',
+        message: formatAPIError(error as Parameters<typeof formatAPIError>[0]),
+      });
+    } finally {
+      setIsUploadingImages(false);
+    }
+  };
+
+  /** Moves files linked outside this flow (typically the PDF) into the article folder. */
+  const handleOrganizar = async () => {
+    if (!documentId) {
+      return;
+    }
+
+    setIsOrganizing(true);
+
+    try {
+      const { data } = await post<{ data: { movidos: string[]; falhas: string[] } }>(
+        `/artigo-xml/${documentId}/organizar`
+      );
+
+      const { movidos, falhas } = data.data;
+
+      toggleNotification({
+        type: falhas.length > 0 ? 'warning' : 'success',
+        message:
+          falhas.length > 0
+            ? `${movidos.length} arquivo(s) organizados; ${falhas.length} falharam.`
+            : `${movidos.length} arquivo(s) organizados em xml/${documentId}.`,
+      });
+    } catch (error) {
+      toggleNotification({
+        type: 'danger',
+        message: formatAPIError(error as Parameters<typeof formatAPIError>[0]),
+      });
+    } finally {
+      setIsOrganizing(false);
+    }
+  };
+
+  /**
+   * Downloads the article package. Goes through the fetch client (instead of a
+   * plain link) because the endpoint is admin-authenticated.
+   */
+  const handleDownloadPackage = async () => {
+    if (!documentId) {
+      return;
+    }
+
+    setIsDownloadingPackage(true);
+
+    try {
+      const { data, headers } = await get(`/artigo-xml/${documentId}/pacote`, {
+        responseType: 'blob',
+      });
+
+      const suggestedName = headers
+        ?.get('content-disposition')
+        ?.match(/filename="([^"]+)"/i)?.[1];
+
+      const url = URL.createObjectURL(data);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = suggestedName || `${documentId}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      toggleNotification({
+        type: 'danger',
+        message: formatAPIError(error as Parameters<typeof formatAPIError>[0]),
+      });
+    } finally {
+      setIsDownloadingPackage(false);
     }
   };
 
@@ -440,6 +580,7 @@ export const ArtigoXmlPage = () => {
       />
       <Layouts.Content>
         <ArtigoXmlNavigationContext.Provider value={navigation}>
+          <FigureAssetsProvider imageMap={imageMap}>
           <Card padding={6}>
           <Flex direction="column" alignItems="stretch" gap={5}>
             <Box>
@@ -494,6 +635,14 @@ export const ArtigoXmlPage = () => {
                       rel="noreferrer"
                     >
                       Baixar
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      startIcon={<Download />}
+                      loading={isDownloadingPackage}
+                      onClick={handleDownloadPackage}
+                    >
+                      Baixar pacote
                     </Button>
                   </Flex>
                 </Flex>
@@ -614,8 +763,68 @@ export const ArtigoXmlPage = () => {
                 onChange={handleFileChange}
               />
             </Field.Root>
+
+            {graphicHrefs.length > 0 && (
+              <>
+                <Divider />
+
+                <Flex direction="column" alignItems="stretch" gap={3}>
+                  <Box>
+                    <Typography variant="delta" tag="h2">
+                      Imagens do artigo
+                    </Typography>
+                    <Typography variant="pi" textColor="neutral600">
+                      {`${graphicHrefs.length} figura(s) referenciada(s) · ${
+                        graphicHrefs.length - missingHrefs.length
+                      } carregada(s) · ${missingHrefs.length} pendente(s) · pasta xml/${documentId}`}
+                    </Typography>
+                  </Box>
+
+                  {missingHrefs.length > 0 && (
+                    <Box background="warning100" hasRadius borderColor="warning200" padding={3}>
+                      <Typography textColor="warning600">
+                        {`Faltam: ${missingHrefs.join(', ')}`}
+                      </Typography>
+                    </Box>
+                  )}
+
+                  <Field.Root hint="Selecione a pasta do artigo; apenas as imagens referenciadas pelo XML são enviadas.">
+                    <Field.Label>Carregar imagens da pasta do artigo</Field.Label>
+                    <Flex gap={2} wrap="wrap">
+                      <Button
+                        variant="default"
+                        startIcon={<Images />}
+                        loading={isUploadingImages}
+                        onClick={() => imagesInputRef.current?.click()}
+                      >
+                        Selecionar pasta de imagens
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        loading={isOrganizing}
+                        onClick={handleOrganizar}
+                      >
+                        Organizar arquivos na pasta
+                      </Button>
+                    </Flex>
+                    <Field.Hint />
+                    <input
+                      ref={imagesInputRef}
+                      type="file"
+                      multiple
+                      style={{ display: 'none' }}
+                      onChange={handleImagesFolderChange}
+                      // `webkitdirectory` turns the picker into a folder picker; it isn't
+                      // in React's HTML typings, so it has to be spread in.
+                      {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+                    />
+                  </Field.Root>
+                </Flex>
+              </>
+            )}
           </Flex>
         </Card>
+          </FigureAssetsProvider>
         </ArtigoXmlNavigationContext.Provider>
       </Layouts.Content>
     </Page.Main>

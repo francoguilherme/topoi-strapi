@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { useFigureHrefResolver } from '../FigureAssetsContext';
 import { renderInlineNodes } from './inline';
 import {
   AttribText,
@@ -360,6 +361,7 @@ const Figure: React.FC<{ el: Element; keyPrefix: string }> = ({ el, keyPrefix })
   const attrib = directChild(el, 'attrib');
   const captionTitle = renderCaptionTitle(caption, keyPrefix);
   const href = graphic ? getGraphicHref(graphic) : null;
+  const resolveHref = useFigureHrefResolver();
 
   return (
     <FigureWrapper id={el.getAttribute('id') || undefined}>
@@ -370,7 +372,7 @@ const Figure: React.FC<{ el: Element; keyPrefix: string }> = ({ el, keyPrefix })
           {captionTitle}
         </CaptionHeading>
       )}
-      {href && <img src={href} alt={label?.textContent || 'Figura'} />}
+      {href && <img src={resolveHref(href)} alt={label?.textContent || 'Figura'} />}
       {attrib && <AttribText>{renderInlineNodes(attrib.childNodes, `${keyPrefix}-attrib`)}</AttribText>}
     </FigureWrapper>
   );

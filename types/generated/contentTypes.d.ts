@@ -501,6 +501,7 @@ export interface ApiArtigoArtigo extends Struct.CollectionTypeSchema {
     doi: Schema.Attribute.String;
     dossie: Schema.Attribute.Boolean & Schema.Attribute.Required;
     edicao: Schema.Attribute.Relation<'manyToOne', 'api::edicao.edicao'>;
+    imagens: Schema.Attribute.Media<'images', true>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
