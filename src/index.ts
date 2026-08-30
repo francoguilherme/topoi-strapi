@@ -35,6 +35,18 @@ const artigoXmlRoutes = {
       handler: 'artigo-xml.pacote',
       info: { apiName: 'artigo' },
     },
+    {
+      method: 'POST',
+      path: '/:documentId/gerar',
+      handler: 'artigo-xml.gerar',
+      info: { apiName: 'artigo' },
+    },
+    {
+      method: 'GET',
+      path: '/:documentId/gerar/:jobId',
+      handler: 'artigo-xml.statusGerar',
+      info: { apiName: 'artigo' },
+    },
   ],
 };
 

@@ -11,11 +11,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.removeFile = exports.assignFileToFolder = exports.uploadToArtigoFolder = exports.ensureArtigoFolder = exports.ensureXmlRootFolder = exports.uploadBasename = exports.XML_ROOT_FOLDER_NAME = void 0;
+exports.removeFile = exports.assignFileToFolder = exports.uploadToArtigoFolder = exports.ensureArtigoFolder = exports.ensureXmlRootFolder = exports.uploadBasename = exports.JATS_XML_FILENAME = exports.XML_ROOT_FOLDER_NAME = void 0;
 const path_1 = __importDefault(require("path"));
 const FOLDER_MODEL_UID = 'plugin::upload.folder';
 const FILE_MODEL_UID = 'plugin::upload.file';
 exports.XML_ROOT_FOLDER_NAME = 'xml';
+/** Nome fixo do XML JATS na pasta do artigo e dentro do pacote .zip. */
+exports.JATS_XML_FILENAME = 'jats.xml';
 const uploadPlugin = () => strapi.plugin('upload');
 const folderService = () => uploadPlugin().service('folder');
 const uploadService = () => uploadPlugin().service('upload');

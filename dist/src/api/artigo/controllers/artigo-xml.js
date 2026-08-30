@@ -19,6 +19,8 @@ const fs_1 = require("fs");
 const stream_1 = require("stream");
 const archiver_1 = __importDefault(require("archiver"));
 const artigo_media_folder_1 = require("../services/artigo-media-folder");
+const converter_client_1 = require("../lib/converter-client");
+const artigo_xml_generate_1 = require("../lib/artigo-xml-generate");
 const ARTIGO_UID = 'api::artigo.artigo';
 /**
  * Extrai os `xlink:href` de `<graphic>` / `<inline-graphic>`. No servidor não há
@@ -87,7 +89,7 @@ exports.default = {
      * O arquivo anterior é removido para não deixar duplicata na biblioteca.
      */
     async uploadXml(ctx) {
-        var _a, _b;
+        var _a;
         const { documentId } = ctx.params;
         const artigo = await findArtigo(documentId);
         if (!artigo) {
@@ -97,11 +99,11 @@ exports.default = {
         if (!file) {
             return ctx.badRequest('Nenhum arquivo XML enviado.');
         }
-        const fileName = (0, artigo_media_folder_1.uploadBasename)(((_a = ctx.request.body) === null || _a === void 0 ? void 0 : _a.fileName) || file.originalFilename, 'artigo.xml');
+        const fileName = artigo_media_folder_1.JATS_XML_FILENAME;
         if (!/\.xml$/i.test(fileName)) {
             return ctx.badRequest('O arquivo precisa ter extensão .xml.');
         }
-        const previousXmlId = (_b = artigo.xml) === null || _b === void 0 ? void 0 : _b.id;
+        const previousXmlId = (_a = artigo.xml) === null || _a === void 0 ? void 0 : _a.id;
         const uploaded = await mediaFolderService().uploadToArtigoFolder(file, documentId, {
             fileName,
             user: ctx.state.user,
@@ -228,7 +230,7 @@ exports.default = {
         ctx.body = { data: { pasta: `xml/${documentId}`, movidos, falhas } };
     },
     /**
-     * Baixa o pacote do artigo como .zip: o XML (como `artigo.xml`) com os
+     * Baixa o pacote do artigo como .zip: o XML (como `jats.xml`) com os
      * `xlink:href` originais e as figuras com o nome exato referenciado.
      */
     async pacote(ctx) {
@@ -297,7 +299,7 @@ exports.default = {
         ctx.body = passThrough;
         // Nome curto no pacote — o slug/título do artigo pode passar de 200 caracteres
         // e estourar MAX_PATH do Windows ao extrair o .zip.
-        archive.append(xmlBuffer, { name: 'artigo.xml' });
+        archive.append(xmlBuffer, { name: artigo_media_folder_1.JATS_XML_FILENAME });
         entradas.forEach(({ name, file }) => {
             const buffer = remotos.get(file.id);
             if (buffer) {
@@ -311,5 +313,62 @@ exports.default = {
             strapi.log.error(`Falha ao finalizar o pacote do artigo ${documentId}: ${error.message}`);
             passThrough.destroy(error);
         });
+    },
+    /**
+     * Dispara a conversão do PDF do artigo. Responde na hora com o jobId; a
+     * montagem do XML acontece quando o cliente consulta `statusGerar`.
+     */
+    async gerar(ctx) {
+        const { documentId } = ctx.params;
+        const artigo = await findArtigo(documentId);
+        if (!artigo) {
+            return ctx.notFound('Artigo não encontrado.');
+        }
+        if (!artigo.arquivo) {
+            return ctx.badRequest('Este artigo não possui um PDF em "arquivo".');
+        }
+        try {
+            const pdf = await readMediaFile(artigo.arquivo);
+            const created = await (0, converter_client_1.createConversionJob)(pdf, artigo.arquivo.name || 'artigo.pdf');
+            ctx.status = 202;
+            ctx.body = { data: { jobId: created.job_id, status: created.status } };
+        }
+        catch (error) {
+            const status = (error === null || error === void 0 ? void 0 : error.status) || 502;
+            ctx.status = status;
+            ctx.body = {
+                error: {
+                    status,
+                    name: 'ConverterError',
+                    message: (error === null || error === void 0 ? void 0 : error.message) || 'Não foi possível iniciar a conversão.',
+                },
+            };
+        }
+    },
+    /**
+     * Consulta o job no conversor. Quando ele termina, monta o JATS, sobe XML e
+     * figuras, e responde `status: concluido`.
+     */
+    async statusGerar(ctx) {
+        const { documentId, jobId } = ctx.params;
+        const artigo = await findArtigo(documentId);
+        if (!artigo) {
+            return ctx.notFound('Artigo não encontrado.');
+        }
+        try {
+            const result = await (0, artigo_xml_generate_1.pollAndMaybeFinalize)(documentId, jobId, ctx.state.user);
+            ctx.body = { data: result };
+        }
+        catch (error) {
+            const status = (error === null || error === void 0 ? void 0 : error.status) || 502;
+            ctx.status = status;
+            ctx.body = {
+                error: {
+                    status,
+                    name: 'ConverterError',
+                    message: (error === null || error === void 0 ? void 0 : error.message) || 'Não foi possível consultar a conversão.',
+                },
+            };
+        }
     },
 };

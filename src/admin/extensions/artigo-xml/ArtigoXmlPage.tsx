@@ -21,7 +21,7 @@ import {
 } from '@strapi/design-system';
 import { Check, Code, Download, Eye, Images, ListPlus, Sparkle, Upload } from '@strapi/icons';
 
-import { ARTIGO_MODEL_UID, getArtigoEditPath } from './constants';
+import { ARTIGO_MODEL_UID, getArtigoEditPath, JATS_XML_FILENAME } from './constants';
 import { ArtigoXmlNavigationContext } from './ArtigoXmlNavigationContext';
 import { FigureAssetsProvider } from './FigureAssetsContext';
 import {
@@ -30,7 +30,7 @@ import {
   type AdvancedEditorSection,
 } from './jats/editor/advancedEditorSections';
 import { AdvancedEditorSectionNav } from './jats/editor/AdvancedEditorSectionNav';
-import { buildFileUrl, formatBytes, isXmlFile, type ArtigoXmlFile } from './utils';
+import { buildFileUrl, formatBytes, formatConverterUserMessage, formatGenerationStatus, isXmlFile, type ArtigoXmlFile } from './utils';
 import { ArticleRenderer, JatsParseError, parseJatsXml } from './jats/ArticleRenderer';
 import {
   buildImageMap,
@@ -49,6 +49,13 @@ interface ArtigoData {
   titulo: string;
   xml: ArtigoXmlFile | null;
   imagens: ArtigoXmlFile[] | null;
+  arquivo?: ArtigoXmlFile | null;
+}
+
+interface GenerationStatus {
+  status: string;
+  error?: string | null;
+  log_tail?: string;
 }
 
 export const ArtigoXmlPage = () => {
@@ -57,6 +64,12 @@ export const ArtigoXmlPage = () => {
   const { update } = unstable_useDocumentActions();
   const { toggleNotification } = useNotification();
   const { formatAPIError } = useAPIErrorHandler();
+
+  const formatConverterError = React.useCallback(
+    (error: Parameters<typeof formatAPIError>[0]) =>
+      formatConverterUserMessage(formatAPIError(error)),
+    [formatAPIError]
+  );
 
   const [artigo, setArtigo] = React.useState<ArtigoData | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
@@ -68,6 +81,8 @@ export const ArtigoXmlPage = () => {
   const [isContentLoading, setIsContentLoading] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
   const [saveError, setSaveError] = React.useState<string | null>(null);
+  const [generationJobId, setGenerationJobId] = React.useState<string | null>(null);
+  const [generationStatus, setGenerationStatus] = React.useState<GenerationStatus | null>(null);
   // `lastSavedXml` mirrors the file currently persisted in Strapi; `draftXml` is the
   // in-progress edit shown by the raw/rendered views. They start out equal and diverge
   // as the user types, which is how the "unsaved changes" UI knows to show up.
@@ -75,7 +90,6 @@ export const ArtigoXmlPage = () => {
   const [draftXml, setDraftXml] = React.useState<string | null>(null);
   const [viewMode, setViewMode] = React.useState<'rendered' | 'raw' | 'editor' | 'advanced'>('rendered');
   const [editorRevision, setEditorRevision] = React.useState(0);
-  const [pendingFileName, setPendingFileName] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const imagesInputRef = React.useRef<HTMLInputElement>(null);
   const loadedXmlIdRef = React.useRef<number | null>(null);
@@ -186,7 +200,7 @@ export const ArtigoXmlPage = () => {
       setHasError(false);
       const { data } = await get<{ data: ArtigoData }>(
         `/content-manager/collection-types/${ARTIGO_MODEL_UID}/${documentId}`,
-        { params: { populate: ['xml', 'imagens'] } }
+        { params: { populate: ['xml', 'imagens', 'arquivo'] } }
       );
 
       setArtigo(data.data);
@@ -204,6 +218,68 @@ export const ArtigoXmlPage = () => {
   React.useEffect(() => {
     fetchArtigo();
   }, [fetchArtigo]);
+
+  React.useEffect(() => {
+    if (!generationJobId || !documentId) {
+      return;
+    }
+
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const poll = async () => {
+      try {
+        const { data } = await get<{ data: GenerationStatus }>(
+          `/artigo-xml/${documentId}/gerar/${generationJobId}`
+        );
+        if (cancelled) {
+          return;
+        }
+
+        const payload = data.data;
+        setGenerationStatus(payload);
+
+        if (payload.status === 'concluido') {
+          setGenerationJobId(null);
+          await fetchArtigo();
+          toggleNotification({ type: 'success', message: 'XML gerado com sucesso.' });
+          return;
+        }
+
+        if (payload.status === 'failed') {
+          setGenerationJobId(null);
+          toggleNotification({
+            type: 'danger',
+            message: payload.error || 'Falha ao gerar o XML.',
+          });
+          return;
+        }
+
+        timeoutId = setTimeout(poll, 10000);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setGenerationJobId(null);
+        setGenerationStatus({
+          status: 'failed',
+          error: formatConverterError(error as Parameters<typeof formatAPIError>[0]),
+        });
+        toggleNotification({
+          type: 'danger',
+          message: formatConverterError(error as Parameters<typeof formatAPIError>[0]),
+        });
+      }
+    };
+
+    poll();
+    return () => {
+      cancelled = true;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [generationJobId, documentId, get, fetchArtigo, toggleNotification, formatConverterError]);
 
   const loadXmlContent = React.useCallback(
     async (xmlFile: ArtigoXmlFile) => {
@@ -267,9 +343,14 @@ export const ArtigoXmlPage = () => {
       }
 
       try {
+        const payload =
+          file.name === JATS_XML_FILENAME
+            ? file
+            : new File([file], JATS_XML_FILENAME, { type: file.type || 'application/xml' });
+
         const formData = new FormData();
-        formData.append('files', file);
-        formData.append('fileName', file.name);
+        formData.append('files', payload, JATS_XML_FILENAME);
+        formData.append('fileName', JATS_XML_FILENAME);
 
         const { data } = await post<{ data: { xml: { id: number } } }>(
           `/artigo-xml/${documentId}/xml`,
@@ -296,28 +377,99 @@ export const ArtigoXmlPage = () => {
     [documentId, post, update, toggleNotification, formatAPIError]
   );
 
+  const notifyImageUploadResult = React.useCallback(
+    (matchedCount: number, missing: string[]) => {
+      if (matchedCount === 0) {
+        return;
+      }
+
+      if (missing.length > 0) {
+        toggleNotification({
+          type: 'warning',
+          message: `${matchedCount} imagem(ns) enviada(s). Ainda faltam ${missing.length}: ${missing
+            .slice(0, 3)
+            .join(', ')}${missing.length > 3 ? '…' : ''}`,
+        });
+      } else {
+        toggleNotification({
+          type: 'success',
+          message: `${matchedCount} imagem(ns) enviada(s) com sucesso.`,
+        });
+      }
+    },
+    [toggleNotification]
+  );
+
+  const uploadMatchedImages = React.useCallback(
+    async (
+      hrefs: string[],
+      matched: Array<{ href: string; file: File }>
+    ): Promise<{ missing: string[] } | null> => {
+      if (!documentId || matched.length === 0) {
+        return null;
+      }
+
+      const formData = new FormData();
+      matched.forEach(({ href, file }) => {
+        formData.append('files', file, hrefBasename(href));
+      });
+      formData.append('hrefs', JSON.stringify(hrefs));
+
+      try {
+        const { data } = await post<{ data: { imagens: ArtigoXmlFile[] } }>(
+          `/artigo-xml/${documentId}/imagens`,
+          formData
+        );
+        const imageMap = buildImageMap(data.data.imagens);
+        const missing = hrefs.filter(
+          (href) => !imageMap.has(hrefBasename(href).toLowerCase())
+        );
+        return { missing };
+      } catch (error) {
+        toggleNotification({
+          type: 'danger',
+          message: formatAPIError(error as Parameters<typeof formatAPIError>[0]),
+        });
+        return null;
+      }
+    },
+    [documentId, post, toggleNotification, formatAPIError]
+  );
+
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files ?? []);
     event.target.value = '';
 
-    if (!file || !documentId) {
+    if (files.length === 0 || !documentId) {
       return;
     }
 
-    if (!isXmlFile(file)) {
+    const xmlFiles = files.filter(isXmlFile);
+    if (xmlFiles.length === 0) {
       toggleNotification({
         type: 'danger',
-        message: 'Selecione um arquivo XML válido (.xml).',
+        message: 'Selecione pelo menos um arquivo XML (.xml).',
       });
       return;
     }
+
+    if (xmlFiles.length > 1) {
+      toggleNotification({
+        type: 'danger',
+        message: 'Selecione apenas um arquivo XML por vez.',
+      });
+      return;
+    }
+
+    const xmlFile = xmlFiles[0];
+    const companionFiles = files.filter((file) => file !== xmlFile);
 
     setIsUploading(true);
 
     try {
       let normalizedXml: string;
       try {
-        normalizedXml = normalizeJatsXml(await file.text());
+        normalizedXml = normalizeJatsXml(await xmlFile.text());
       } catch {
         toggleNotification({
           type: 'danger',
@@ -327,25 +479,58 @@ export const ArtigoXmlPage = () => {
         return;
       }
 
+      const hrefs = extractGraphicHrefs(normalizedXml);
+      const { matched, missing } = matchFolderFiles(hrefs, companionFiles);
+
       // When the article already has an XML, load the new file into the draft
       // so the user can review it before explicitly saving.
       if (artigo?.xml) {
         setViewMode('rendered');
         setDraftXml(normalizedXml);
-        setPendingFileName(file.name);
         setSaveError(null);
         setEditorRevision((revision) => revision + 1);
+
+        if (matched.length > 0) {
+          const result = await uploadMatchedImages(hrefs, matched);
+          if (result) {
+            await fetchArtigo();
+            notifyImageUploadResult(matched.length, result.missing);
+          }
+        } else if (hrefs.length > 0 && companionFiles.length > 0) {
+          toggleNotification({
+            type: 'warning',
+            message:
+              'Nenhuma das imagens selecionadas corresponde às figuras referenciadas pelo XML.',
+          });
+        }
+
         return;
       }
 
-      const normalizedFile = new File([normalizedXml], file.name, {
-        type: file.type || 'application/xml',
+      const normalizedFile = new File([normalizedXml], JATS_XML_FILENAME, {
+        type: xmlFile.type || 'application/xml',
       });
       const succeeded = await replaceXmlFile(normalizedFile);
-      if (succeeded) {
-        setLastSavedXml(null);
-        setDraftXml(null);
-        await fetchArtigo();
+      if (!succeeded) {
+        return;
+      }
+
+      setLastSavedXml(null);
+      setDraftXml(null);
+      await fetchArtigo();
+
+      if (matched.length > 0) {
+        const result = await uploadMatchedImages(hrefs, matched);
+        if (result) {
+          await fetchArtigo();
+          notifyImageUploadResult(matched.length, result.missing);
+        }
+      } else if (hrefs.length > 0 && companionFiles.length > 0) {
+        toggleNotification({
+          type: 'warning',
+          message:
+            'O XML foi enviado, mas nenhuma das imagens selecionadas corresponde às figuras referenciadas.',
+        });
       }
     } finally {
       setIsUploading(false);
@@ -353,11 +538,10 @@ export const ArtigoXmlPage = () => {
   };
 
   /**
-   * Takes the folder the user picked (the SciELO article folder, which also holds
-   * the .xml and may have subfolders), keeps only the images the XML actually
+   * Takes the files the user picked, keeps only the images the XML actually
    * references and uploads them into `xml/{documentId}/`.
    */
-  const handleImagesFolderChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImagesFilesChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = '';
 
@@ -365,12 +549,12 @@ export const ArtigoXmlPage = () => {
       return;
     }
 
-    const { matched, missing } = matchFolderFiles(graphicHrefs, files);
+    const { matched } = matchFolderFiles(graphicHrefs, files);
 
     if (matched.length === 0) {
       toggleNotification({
         type: 'danger',
-        message: 'Nenhuma das imagens referenciadas pelo XML foi encontrada na pasta selecionada.',
+        message: 'Nenhuma das imagens referenciadas pelo XML foi encontrada nos arquivos selecionados.',
       });
       return;
     }
@@ -378,35 +562,11 @@ export const ArtigoXmlPage = () => {
     setIsUploadingImages(true);
 
     try {
-      const formData = new FormData();
-      matched.forEach(({ href, file }) => {
-        // Sem o 3º argumento, o multipart pode levar o caminho relativo da pasta
-        // (`artigo/figura.png`) e o Strapi rejeita `/` no nome do arquivo.
-        formData.append('files', file, hrefBasename(href));
-      });
-      formData.append('hrefs', JSON.stringify(graphicHrefs));
-
-      await post(`/artigo-xml/${documentId}/imagens`, formData);
-      await fetchArtigo();
-
-      if (missing.length > 0) {
-        toggleNotification({
-          type: 'warning',
-          message: `${matched.length} imagem(ns) enviada(s). Ainda faltam ${missing.length}: ${missing
-            .slice(0, 3)
-            .join(', ')}${missing.length > 3 ? '…' : ''}`,
-        });
-      } else {
-        toggleNotification({
-          type: 'success',
-          message: `${matched.length} imagem(ns) enviada(s) com sucesso.`,
-        });
+      const result = await uploadMatchedImages(graphicHrefs, matched);
+      if (result) {
+        await fetchArtigo();
+        notifyImageUploadResult(matched.length, result.missing);
       }
-    } catch (error) {
-      toggleNotification({
-        type: 'danger',
-        message: formatAPIError(error as Parameters<typeof formatAPIError>[0]),
-      });
     } finally {
       setIsUploadingImages(false);
     }
@@ -482,6 +642,53 @@ export const ArtigoXmlPage = () => {
     }
   };
 
+  const handleGenerateXml = async () => {
+    if (!documentId || !artigo) {
+      return;
+    }
+
+    if (!artigo.arquivo) {
+      toggleNotification({
+        type: 'danger',
+        message: 'Este artigo não possui um PDF em "arquivo" para converter.',
+      });
+      return;
+    }
+
+    if (isDirty) {
+      const confirmed = window.confirm(
+        'Há alterações não salvas no XML. Gerar um novo XML vai descartá-las. Continuar?'
+      );
+      if (!confirmed) {
+        return;
+      }
+    } else if (artigo.xml) {
+      const confirmed = window.confirm(
+        'Este artigo já possui um XML. Gerar um novo vai substituí-lo. Continuar?'
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    try {
+      const { data } = await post<{ data: { jobId: string; status: string } }>(
+        `/artigo-xml/${documentId}/gerar`
+      );
+      setGenerationJobId(data.data.jobId);
+      setGenerationStatus({ status: data.data.status });
+      toggleNotification({
+        type: 'info',
+        message: 'Conversão iniciada. Isso pode levar 1 ou mais minutos.',
+      });
+    } catch (error) {
+      toggleNotification({
+        type: 'danger',
+        message: formatConverterError(error as Parameters<typeof formatAPIError>[0]),
+      });
+    }
+  };
+
   const handleParseError = React.useCallback(() => {
     changeViewMode('raw');
     toggleNotification({
@@ -497,7 +704,6 @@ export const ArtigoXmlPage = () => {
 
   const handleDiscardDraft = React.useCallback(() => {
     setDraftXml(lastSavedXml);
-    setPendingFileName(null);
     setSaveError(null);
     setEditorRevision((revision) => revision + 1);
   }, [lastSavedXml]);
@@ -524,13 +730,11 @@ export const ArtigoXmlPage = () => {
     setIsSaving(true);
 
     try {
-      const fileName = pendingFileName ?? artigo.xml.name;
-      const file = new File([normalizedXml], fileName, { type: 'application/xml' });
+      const file = new File([normalizedXml], JATS_XML_FILENAME, { type: 'application/xml' });
       const succeeded = await replaceXmlFile(file);
       if (succeeded) {
         setLastSavedXml(normalizedXml);
         setDraftXml(normalizedXml);
-        setPendingFileName(null);
         setEditorRevision((revision) => revision + 1);
         toggleNotification({ type: 'success', message: 'XML salvo com sucesso.' });
         await fetchArtigo();
@@ -538,7 +742,7 @@ export const ArtigoXmlPage = () => {
     } finally {
       setIsSaving(false);
     }
-  }, [draftXml, artigo?.xml, pendingFileName, replaceXmlFile, fetchArtigo, toggleNotification]);
+  }, [draftXml, artigo?.xml, replaceXmlFile, fetchArtigo, toggleNotification]);
 
   // Best-effort warning so an accidental tab close/navigation doesn't silently
   // discard edits that were never saved.
@@ -588,7 +792,7 @@ export const ArtigoXmlPage = () => {
                 Arquivo XML
               </Typography>
               <Typography variant="pi" textColor="neutral600">
-                Visualize ou substitua o arquivo XML associado a este artigo.
+                Visualize, substitua ou gere o arquivo XML associado a este artigo.
               </Typography>
             </Box>
 
@@ -598,11 +802,7 @@ export const ArtigoXmlPage = () => {
               <Flex direction="column" alignItems="stretch" gap={4}>
                 <Flex justifyContent="space-between" alignItems="center" wrap="wrap" gap={3}>
                   <Flex direction="column" alignItems="flex-start" gap={1}>
-                    <Typography fontWeight="semiBold">
-                      {pendingFileName ?? artigo.xml.name}
-                      {isDirty && ' *'}
-                    </Typography>
-                    <Typography variant="pi" textColor="neutral600">
+                    <Typography textColor="neutral600">
                       {formatBytes(artigo.xml.size * 1000)}
                       {artigo.xml.updatedAt
                         ? ` · Atualizado em ${new Date(artigo.xml.updatedAt).toLocaleString('pt-BR')}`
@@ -742,7 +942,45 @@ export const ArtigoXmlPage = () => {
 
             <Divider />
 
-            <Field.Root hint="Apenas arquivos .xml são aceitos.">
+            <Flex gap={2} wrap="wrap">
+              <Button
+                variant="default"
+                startIcon={<Sparkle />}
+                loading={Boolean(generationJobId)}
+                disabled={!artigo.arquivo || Boolean(generationJobId)}
+                onClick={handleGenerateXml}
+              >
+                Gerar XML
+              </Button>
+            </Flex>
+
+            {generationJobId && (
+              <Box background="secondary100" hasRadius borderColor="secondary200" padding={3}>
+                <Typography>
+                  Convertendo o PDF… Isso pode levar 1 ou mais minutos.
+                  {generationStatus?.status
+                    ? ` Status: ${formatGenerationStatus(generationStatus.status)}.`
+                    : ''}
+                </Typography>
+              </Box>
+            )}
+
+            {generationStatus?.status === 'failed' && generationStatus.error && (
+              <Box background="danger100" hasRadius borderColor="danger200" padding={3}>
+                <Typography textColor="danger600">
+                  {formatConverterUserMessage(generationStatus.error)}
+                </Typography>
+                {generationStatus.log_tail && (
+                  <Typography variant="pi" textColor="neutral600">
+                    {generationStatus.log_tail.slice(-1500)}
+                  </Typography>
+                )}
+              </Box>
+            )}
+
+            <Divider />
+
+            <Field.Root hint="Selecione o .xml e, opcionalmente, as imagens referenciadas por ele (múltiplos arquivos).">
               <Field.Label>{artigo.xml ? 'Substituir arquivo XML' : 'Enviar arquivo XML'}</Field.Label>
               <Flex gap={2}>
                 <Button
@@ -751,14 +989,15 @@ export const ArtigoXmlPage = () => {
                   loading={isUploading}
                   onClick={() => fileInputRef.current?.click()}
                 >
-                  Selecionar arquivo
+                  Selecionar arquivos
                 </Button>
               </Flex>
               <Field.Hint />
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".xml,text/xml,application/xml"
+                multiple
+                accept=".xml,text/xml,application/xml,image/*"
                 style={{ display: 'none' }}
                 onChange={handleFileChange}
               />
@@ -776,7 +1015,7 @@ export const ArtigoXmlPage = () => {
                     <Typography variant="pi" textColor="neutral600">
                       {`${graphicHrefs.length} figura(s) referenciada(s) · ${
                         graphicHrefs.length - missingHrefs.length
-                      } carregada(s) · ${missingHrefs.length} pendente(s) · pasta xml/${documentId}`}
+                      } carregada(s) · ${missingHrefs.length} pendente(s)`}
                     </Typography>
                   </Box>
 
@@ -788,8 +1027,8 @@ export const ArtigoXmlPage = () => {
                     </Box>
                   )}
 
-                  <Field.Root hint="Selecione a pasta do artigo; apenas as imagens referenciadas pelo XML são enviadas.">
-                    <Field.Label>Carregar imagens da pasta do artigo</Field.Label>
+                  <Field.Root hint="Selecione as imagens referenciadas pelo XML (múltiplos arquivos).">
+                    <Field.Label>Carregar imagens do artigo</Field.Label>
                     <Flex gap={2} wrap="wrap">
                       <Button
                         variant="default"
@@ -797,7 +1036,7 @@ export const ArtigoXmlPage = () => {
                         loading={isUploadingImages}
                         onClick={() => imagesInputRef.current?.click()}
                       >
-                        Selecionar pasta de imagens
+                        Selecionar imagens
                       </Button>
                       <Button
                         variant="secondary"
@@ -812,11 +1051,9 @@ export const ArtigoXmlPage = () => {
                       ref={imagesInputRef}
                       type="file"
                       multiple
+                      accept="image/*"
                       style={{ display: 'none' }}
-                      onChange={handleImagesFolderChange}
-                      // `webkitdirectory` turns the picker into a folder picker; it isn't
-                      // in React's HTML typings, so it has to be spread in.
-                      {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+                      onChange={handleImagesFilesChange}
                     />
                   </Field.Root>
                 </Flex>

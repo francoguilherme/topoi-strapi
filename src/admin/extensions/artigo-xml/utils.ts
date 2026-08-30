@@ -48,3 +48,35 @@ export const isXmlFile = (file: File): boolean => {
 
   return hasXmlExtension && hasXmlMime;
 };
+
+const GENERATION_STATUS_LABELS: Record<string, string> = {
+  queued: 'Na fila',
+  running: 'Convertendo',
+  succeeded: 'Montando XML e imagens',
+  failed: 'Falhou',
+  concluido: 'Concluído',
+};
+
+/** Rótulo em português para o status do job de conversão PDF → JATS. */
+export const formatGenerationStatus = (status: string): string =>
+  GENERATION_STATUS_LABELS[status] ?? status;
+
+const CONVERTER_UNAVAILABLE =
+  'O serviço de conversão PDF → XML não está disponível. Verifique se o serviço está em execução.';
+
+/** Torna erros de rede/conversor mais legíveis na UI do admin. */
+export const formatConverterUserMessage = (message: string): string => {
+  const normalized = message.trim().toLowerCase();
+
+  if (
+    normalized === 'fetch failed' ||
+    normalized.includes('econnrefused') ||
+    normalized.includes('enotfound') ||
+    normalized.includes('etimedout') ||
+    normalized.includes('network error')
+  ) {
+    return CONVERTER_UNAVAILABLE;
+  }
+
+  return message;
+};

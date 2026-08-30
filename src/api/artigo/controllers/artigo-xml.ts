@@ -15,7 +15,9 @@ import { createReadStream } from 'fs';
 import { PassThrough } from 'stream';
 import archiver from 'archiver';
 
-import { uploadBasename } from '../services/artigo-media-folder';
+import { JATS_XML_FILENAME, uploadBasename } from '../services/artigo-media-folder';
+import { createConversionJob } from '../lib/converter-client';
+import { pollAndMaybeFinalize } from '../lib/artigo-xml-generate';
 
 const ARTIGO_UID = 'api::artigo.artigo';
 
@@ -131,7 +133,7 @@ export default {
       return ctx.badRequest('Nenhum arquivo XML enviado.');
     }
 
-    const fileName = uploadBasename(ctx.request.body?.fileName || file.originalFilename, 'artigo.xml');
+    const fileName = JATS_XML_FILENAME;
     if (!/\.xml$/i.test(fileName)) {
       return ctx.badRequest('O arquivo precisa ter extensão .xml.');
     }
@@ -289,7 +291,7 @@ export default {
   },
 
   /**
-   * Baixa o pacote do artigo como .zip: o XML (como `artigo.xml`) com os
+   * Baixa o pacote do artigo como .zip: o XML (como `jats.xml`) com os
    * `xlink:href` originais e as figuras com o nome exato referenciado.
    */
   async pacote(ctx: any) {
@@ -374,7 +376,7 @@ export default {
 
     // Nome curto no pacote — o slug/título do artigo pode passar de 200 caracteres
     // e estourar MAX_PATH do Windows ao extrair o .zip.
-    archive.append(xmlBuffer, { name: 'artigo.xml' });
+    archive.append(xmlBuffer, { name: JATS_XML_FILENAME });
 
     entradas.forEach(({ name, file }) => {
       const buffer = remotos.get(file.id);
@@ -389,5 +391,67 @@ export default {
       strapi.log.error(`Falha ao finalizar o pacote do artigo ${documentId}: ${error.message}`);
       passThrough.destroy(error);
     });
+  },
+
+  /**
+   * Dispara a conversão do PDF do artigo. Responde na hora com o jobId; a
+   * montagem do XML acontece quando o cliente consulta `statusGerar`.
+   */
+  async gerar(ctx: any) {
+    const { documentId } = ctx.params;
+    const artigo = await findArtigo(documentId);
+
+    if (!artigo) {
+      return ctx.notFound('Artigo não encontrado.');
+    }
+
+    if (!artigo.arquivo) {
+      return ctx.badRequest('Este artigo não possui um PDF em "arquivo".');
+    }
+
+    try {
+      const pdf = await readMediaFile(artigo.arquivo);
+      const created = await createConversionJob(pdf, artigo.arquivo.name || 'artigo.pdf');
+      ctx.status = 202;
+      ctx.body = { data: { jobId: created.job_id, status: created.status } };
+    } catch (error: any) {
+      const status = error?.status || 502;
+      ctx.status = status;
+      ctx.body = {
+        error: {
+          status,
+          name: 'ConverterError',
+          message: error?.message || 'Não foi possível iniciar a conversão.',
+        },
+      };
+    }
+  },
+
+  /**
+   * Consulta o job no conversor. Quando ele termina, monta o JATS, sobe XML e
+   * figuras, e responde `status: concluido`.
+   */
+  async statusGerar(ctx: any) {
+    const { documentId, jobId } = ctx.params;
+    const artigo = await findArtigo(documentId);
+
+    if (!artigo) {
+      return ctx.notFound('Artigo não encontrado.');
+    }
+
+    try {
+      const result = await pollAndMaybeFinalize(documentId, jobId, ctx.state.user);
+      ctx.body = { data: result };
+    } catch (error: any) {
+      const status = error?.status || 502;
+      ctx.status = status;
+      ctx.body = {
+        error: {
+          status,
+          name: 'ConverterError',
+          message: error?.message || 'Não foi possível consultar a conversão.',
+        },
+      };
+    }
   },
 };

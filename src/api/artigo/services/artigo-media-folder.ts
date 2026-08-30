@@ -14,6 +14,9 @@ const FILE_MODEL_UID = 'plugin::upload.file';
 
 export const XML_ROOT_FOLDER_NAME = 'xml';
 
+/** Nome fixo do XML JATS na pasta do artigo e dentro do pacote .zip. */
+export const JATS_XML_FILENAME = 'jats.xml';
+
 interface UploadFolder {
   id: number;
   name: string;
