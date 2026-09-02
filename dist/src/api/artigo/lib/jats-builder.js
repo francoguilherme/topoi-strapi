@@ -14,14 +14,17 @@ const XLINK_NS = 'http://www.w3.org/1999/xlink';
 const MML_NS = 'http://www.w3.org/1998/Math/MathML';
 const JOURNAL = {
     publisherId: 'topoi',
-    title: 'Topoi: Revista de História',
+    title: 'Topoi (Rio de Janeiro)',
     abbrev: 'Topoi (Rio J.)',
     issnPpub: '1518-3319',
     issnEpub: '2237-101X',
-    publisher: 'Universidade Federal do Rio de Janeiro or Programa de Pós-Graduação em História Social da Universidade Federal do Rio de Janeiro',
+    publisher: 'Programa de Pós-Graduação em História Social da Universidade Federal do Rio de Janeiro',
 };
 const LICENSE_HREF = 'http://creativecommons.org/licenses/by/4.0/';
 const LICENSE_P = 'Este é um artigo publicado em acesso aberto (Open Access) sob a licença Creative Commons Attribution, que permite uso, distribuição e reprodução em qualquer meio, sem restrições desde que o trabalho original seja corretamente citado.';
+//TODO Dinamizar
+// Este es un artículo publicado en acceso abierto (Open Access) bajo la licencia Creative Commons Attribution, que permite su uso, distribución y reproducción en cualquier medio, sin restricciones siempre que el trabajo original sea debidamente citado.
+// This is an Open Access article distributed under the terms of the Creative Commons Attribution License, which permits unrestricted use, distribution, and reproduction in any medium, provided the original work is properly cited.
 const NAME_PARTICLES = new Set([
     'da',
     'de',
@@ -35,6 +38,38 @@ const NAME_PARTICLES = new Set([
     'di',
     "d'",
 ]);
+const stripAccents = (value) => value.normalize('NFD').replace(/\p{M}/gu, '');
+const normalizeNameSuffixToken = (token) => stripAccents(token).toLowerCase().replace(/\.+$/, '');
+const NAME_SUFFIXES = new Set([
+    // Português
+    'filho',
+    'filha',
+    'junior',
+    'jr',
+    'neto',
+    'neta',
+    'bisneto',
+    'bisneta',
+    'sobrinho',
+    'sobrinha',
+    // Inglês
+    'senior',
+    'sr',
+    'son',
+    'ii',
+    'iii',
+    'iv',
+    'v',
+    // Espanhol
+    'hijo',
+    'hija',
+    'nieto',
+    'nieta',
+    'bisnieto',
+    'bisnieta',
+]);
+const isNameSuffix = (token) => NAME_SUFFIXES.has(normalizeNameSuffixToken(token));
+const affLabel = (oneBasedIndex) => '*'.repeat(oneBasedIndex);
 const MD_LINK_RE = /\[([^\]]*)\]\(#([A-Za-z]+)-(\d+)\)/g;
 const URL_RE = /(https?:\/\/[^\s<>"'\)\]]+)/g;
 const ARTICLE_TYPE_BY_SECAO = {
@@ -44,9 +79,9 @@ const ARTICLE_TYPE_BY_SECAO = {
     Documento: 'other',
 };
 const KWD_TITLES = {
-    pt: 'Palavras-chave',
-    en: 'Keywords',
-    es: 'Palabras clave',
+    pt: 'Palavras-chave:',
+    en: 'Keywords:',
+    es: 'Palabras clave:',
 };
 const ABSTRACT_TITLES = {
     pt: 'RESUMO',
@@ -65,7 +100,7 @@ const buildJatsXml = (artigo, json) => {
         'article-type': ARTICLE_TYPE_BY_SECAO[artigo.secao || 'Artigo'] || 'research-article',
         'dtd-version': '1.1',
         'specific-use': 'sps-1.9',
-        'xml:lang': 'pt',
+        'xml:lang': 'pt', //TODO Dinamizar
     });
     const front = article.ele('front');
     appendJournalMeta(front);
@@ -74,7 +109,8 @@ const buildJatsXml = (artigo, json) => {
     appendBlocks(body, (_a = json.body) !== null && _a !== void 0 ? _a : []);
     const back = article.ele('back');
     appendFootnotes(back, (_b = json.footnotes) !== null && _b !== void 0 ? _b : []);
-    appendBlocks(back, (_c = json.back_matter) !== null && _c !== void 0 ? _c : []);
+    //TODO Adicionar acknowledgements <ack> ?
+    appendBlocks(back, (_c = json.back_matter) !== null && _c !== void 0 ? _c : []); //TODO Testar isso
     appendReferences(back, (_d = json.references) !== null && _d !== void 0 ? _d : []);
     return doc.end({ prettyPrint: true, indent: '  ' });
 };
@@ -90,12 +126,17 @@ const appendJournalMeta = (front) => {
     journal.ele('publisher').ele('publisher-name').txt(JOURNAL.publisher);
 };
 const appendArticleMeta = (meta, artigo, json) => {
-    var _a;
+    var _a, _b;
     const doi = (artigo.doi || '').trim();
     if (doi) {
         meta.ele('article-id', { 'pub-id-type': 'doi' }).txt(doi.replace(/^https?:\/\/doi\.org\//i, ''));
     }
-    const subject = artigo.dossie ? `Dossiê${artigo.secao && artigo.secao !== 'Artigo' ? ` ${artigo.secao}` : ''}` : artigo.secao || 'Artigo';
+    //TODO Dinamizar com língua, pegando titulo_en ou titulo_es, e Original Article por exemplo
+    const subject = artigo.dossie
+        ? (((_a = artigo.edicao) === null || _a === void 0 ? void 0 : _a.titulo) || '').trim()
+        : artigo.secao === 'Artigo'
+            ? 'Artigo original'
+            : artigo.secao || 'Artigo original';
     meta
         .ele('article-categories')
         .ele('subj-group', { 'subj-group-type': 'heading' })
@@ -109,7 +150,8 @@ const appendArticleMeta = (meta, artigo, json) => {
     if ((artigo.titulo_es || '').trim()) {
         titleGroup.ele('trans-title-group', { 'xml:lang': 'es' }).ele('trans-title').txt(artigo.titulo_es.trim());
     }
-    appendContribs(meta, (_a = artigo.autores) !== null && _a !== void 0 ? _a : []);
+    appendContribs(meta, (_b = artigo.autores) !== null && _b !== void 0 ? _b : []);
+    //TODO Adicionar author-notes?
     appendPubDates(meta, artigo);
     appendPages(meta, artigo);
     const permissions = meta.ele('permissions');
@@ -118,7 +160,7 @@ const appendArticleMeta = (meta, artigo, json) => {
         'xmlns:xlink': XLINK_NS,
         'license-type': 'open-access',
         'xlink:href': LICENSE_HREF,
-        'xml:lang': 'pt',
+        'xml:lang': 'pt', //TODO Dinamizar
     })
         .ele('license-p')
         .txt(LICENSE_P);
@@ -131,20 +173,26 @@ const appendContribs = (meta, autores) => {
     const group = meta.ele('contrib-group');
     autores.forEach((autor, index) => {
         const affId = `aff${index + 1}`;
+        const label = affLabel(index + 1);
         const contrib = group.ele('contrib', { 'contrib-type': 'author' });
         const orcid = normalizeOrcid(autor.orcid);
         if (orcid) {
             contrib.ele('contrib-id', { 'contrib-id-type': 'orcid' }).txt(orcid);
         }
-        const { given, surname } = (0, exports.splitPersonName)(autor.nome || '');
+        //TODO Testar essa divisão
+        const { given, surname, suffix } = (0, exports.splitPersonName)(autor.nome || '');
         const name = contrib.ele('name');
         name.ele('surname').txt(surname);
         if (given) {
             name.ele('given-names').txt(given);
         }
-        contrib.ele('xref', { 'ref-type': 'aff', rid: affId }).txt(String(index + 1));
+        if (suffix) {
+            name.ele('suffix').txt(suffix);
+        }
+        contrib.ele('xref', { 'ref-type': 'aff', rid: affId }).txt(label);
         const aff = meta.ele('aff', { id: affId });
-        aff.ele('label').txt(String(index + 1));
+        aff.ele('label').txt(label);
+        //TODO Testar isso
         const parts = [autor.instituicao, autor.departamento].map((value) => (value || '').trim()).filter(Boolean);
         if (autor.instituicao) {
             aff.ele('institution', { 'content-type': 'orgname' }).txt(autor.instituicao.trim());
@@ -198,6 +246,7 @@ const appendAbstractsAndKeywords = (meta, artigo, json) => {
     appendKwdGroup(meta, 'pt', ptKeywords);
     appendKwdGroup(meta, 'en', enKeywords);
     appendKwdGroup(meta, 'es', esKeywords);
+    //TODO Adicionar funding-group?
 };
 const appendAbstract = (meta, tag, lang, text) => {
     if (!text) {
@@ -213,7 +262,7 @@ const appendKwdGroup = (meta, lang, keywords) => {
         return;
     }
     const group = meta.ele('kwd-group', { 'xml:lang': lang });
-    group.ele('title').txt(KWD_TITLES[lang] || 'Palavras-chave');
+    group.ele('title').txt(KWD_TITLES[lang] || 'Palavras-chave:');
     keywords.forEach((keyword) => group.ele('kwd').txt(keyword));
 };
 const appendBlocks = (parent, items) => {
@@ -340,7 +389,7 @@ const appendFootnotes = (back, footnotes) => {
         const node = group.ele('fn', { 'fn-type': 'other', id: spsId });
         node.ele('label').txt(label);
         const p = node.ele('p');
-        (0, exports.appendMixed)(p, asPlain(fn.text));
+        (0, exports.appendMixed)(p, asPlain(fn.text)); //TODO Testar se <italic> e link funcionam
     });
 };
 const appendReferences = (back, references) => {
@@ -348,11 +397,11 @@ const appendReferences = (back, references) => {
         return;
     }
     const list = back.ele('ref-list');
-    list.ele('title').txt('Referências');
+    list.ele('title').txt('Referências'); //TODO Dinamizar
     references.forEach((ref, index) => {
         const node = list.ele('ref', { id: (0, exports.toSpsId)('reference', ref.id || String(index + 1)) });
         const mixed = node.ele('mixed-citation');
-        (0, exports.appendMixed)(mixed, asPlain(ref.text));
+        (0, exports.appendMixed)(mixed, asPlain(ref.text)); //TODO Testar se <italic> funciona?
     });
 };
 const appendMixed = (parent, text) => {
@@ -440,14 +489,25 @@ const splitPersonName = (full) => {
     if (parts.length === 0) {
         return { given: '', surname: '' };
     }
+    let suffix;
+    if (parts.length > 1 && isNameSuffix(parts[parts.length - 1])) {
+        suffix = parts.pop();
+    }
+    if (parts.length === 0) {
+        return { given: '', surname: suffix || '' };
+    }
     if (parts.length === 1) {
-        return { given: '', surname: parts[0] };
+        return { given: '', surname: parts[0], ...(suffix ? { suffix } : {}) };
     }
     let index = parts.length - 1;
     while (index > 1 && NAME_PARTICLES.has(parts[index - 1].toLowerCase())) {
         index -= 1;
     }
-    return { given: parts.slice(0, index).join(' '), surname: parts.slice(index).join(' ') };
+    return {
+        given: parts.slice(0, index).join(' '),
+        surname: parts.slice(index).join(' '),
+        ...(suffix ? { suffix } : {}),
+    };
 };
 exports.splitPersonName = splitPersonName;
 const flattenBlocks = (value) => {

@@ -9,68 +9,20 @@
  * de `src/api/*\/routes` são sempre content-api e não aceitam o JWT do admin.
  */
 
-import path from 'path';
-import fs from 'fs/promises';
-import { createReadStream } from 'fs';
-import { PassThrough } from 'stream';
-import archiver from 'archiver';
-
 import { JATS_XML_FILENAME, uploadBasename } from '../services/artigo-media-folder';
 import { createConversionJob } from '../lib/converter-client';
 import { pollAndMaybeFinalize } from '../lib/artigo-xml-generate';
+import {
+  buildPacoteStream,
+  hrefBasename,
+  ImagensAusentesError,
+  isExternalHref,
+  readMediaFile,
+  type ArtigoWithMedia,
+  type MediaFile,
+} from '../lib/artigo-pacote';
 
 const ARTIGO_UID = 'api::artigo.artigo';
-
-/**
- * Extrai os `xlink:href` de `<graphic>` / `<inline-graphic>`. No servidor não há
- * `DOMParser`, e para montar o pacote basta a lista de nomes referenciados.
- */
-const extractGraphicHrefs = (xml: string): string[] => {
-  const pattern = /<(?:\w+:)?(?:inline-)?graphic\b[^>]*?\b(?:xlink:)?href\s*=\s*"([^"]*)"/gi;
-  const hrefs: string[] = [];
-
-  for (const match of xml.matchAll(pattern)) {
-    const href = match[1]?.trim();
-    if (href) {
-      hrefs.push(href);
-    }
-  }
-
-  return hrefs;
-};
-
-const isExternalHref = (href: string): boolean => /^(https?:)?\/\//i.test(href);
-
-const hrefBasename = (href: string): string => href.split(/[\\/]/).pop() || href;
-
-/** Limite do nome do .zip para não estourar MAX_PATH do Windows na extração. */
-const MAX_PACOTE_ZIP_BASENAME = 80;
-
-const pacoteZipBasename = (slug: string | null | undefined, documentId: string): string => {
-  const base = (slug || documentId).trim();
-  if (base.length <= MAX_PACOTE_ZIP_BASENAME) {
-    return base;
-  }
-  return base.slice(0, MAX_PACOTE_ZIP_BASENAME).replace(/[-_]+$/, '');
-};
-
-interface MediaFile {
-  id: number;
-  name: string;
-  url: string;
-  mime: string;
-  size: number;
-}
-
-interface ArtigoWithMedia {
-  id: number;
-  documentId: string;
-  titulo: string;
-  slug?: string | null;
-  xml?: MediaFile | null;
-  arquivo?: MediaFile | null;
-  imagens?: MediaFile[] | null;
-}
 
 const mediaFolderService = () => strapi.service(`${ARTIGO_UID}-media-folder`);
 
@@ -87,24 +39,6 @@ const incomingFiles = (ctx: any): any[] => {
     return [];
   }
   return Array.isArray(files) ? files : [files];
-};
-
-const publicFilePath = (file: MediaFile): string =>
-  path.join(strapi.dirs.static.public, file.url);
-
-const isRemote = (file: MediaFile): boolean => /^https?:\/\//i.test(file.url);
-
-/** Lê um arquivo da Media Library, seja do disco (provider local) ou da URL. */
-const readMediaFile = async (file: MediaFile): Promise<Buffer> => {
-  if (isRemote(file)) {
-    const response = await fetch(file.url);
-    if (!response.ok) {
-      throw new Error(`Não foi possível baixar "${file.name}" (${response.status}).`);
-    }
-    return Buffer.from(await response.arrayBuffer());
-  }
-
-  return fs.readFile(publicFilePath(file));
 };
 
 const toMediaSummary = (file: MediaFile) => ({
@@ -306,91 +240,29 @@ export default {
       return ctx.badRequest('Este artigo não possui um arquivo XML.');
     }
 
-    const xmlBuffer = await readMediaFile(artigo.xml);
-    const imagens = artigo.imagens ?? [];
-    const imagensPorNome = new Map(imagens.map((file) => [file.name.toLowerCase(), file]));
+    try {
+      const { stream, zipName } = await buildPacoteStream(artigo, documentId);
 
-    const hrefsLocais = extractGraphicHrefs(xmlBuffer.toString('utf8')).filter(
-      (href) => !isExternalHref(href)
-    );
-    const faltando = hrefsLocais.filter(
-      (href) => !imagensPorNome.has(hrefBasename(href).toLowerCase())
-    );
-
-    if (faltando.length > 0) {
-      ctx.status = 422;
-      ctx.body = {
-        error: {
-          status: 422,
-          name: 'ImagensAusentes',
-          message: 'O XML referencia imagens que ainda não foram carregadas.',
-          details: { faltando },
-        },
-      };
-      return;
-    }
-
-    // Só as figuras realmente referenciadas entram no pacote, com o nome exato
-    // usado no `xlink:href` — é isso que mantém o XML utilizável sem reescrita.
-    const entradas: Array<{ name: string; file: MediaFile }> = [];
-    const nomesUsados = new Set<string>();
-
-    for (const href of hrefsLocais) {
-      const nome = hrefBasename(href);
-      const chave = nome.toLowerCase();
-      if (nomesUsados.has(chave)) {
-        continue;
+      ctx.set('Content-Type', 'application/zip');
+      ctx.set('Content-Disposition', `attachment; filename="${zipName}"`);
+      // O objeto Archiver tem `.pipe()` mas não é `instanceof Stream`; o Koa tentaria
+      // serializá-lo como JSON. O PassThrough é o corpo legível que o Koa escoa.
+      ctx.body = stream;
+    } catch (error) {
+      if (error instanceof ImagensAusentesError) {
+        ctx.status = 422;
+        ctx.body = {
+          error: {
+            status: 422,
+            name: 'ImagensAusentes',
+            message: error.message,
+            details: { faltando: error.faltando },
+          },
+        };
+        return;
       }
-      nomesUsados.add(chave);
-      entradas.push({ name: nome, file: imagensPorNome.get(chave)! });
+      throw error;
     }
-
-    // Arquivos remotos são baixados antes de a resposta começar, para que uma
-    // falha de download ainda possa virar um erro HTTP em vez de um zip truncado.
-    const remotos = new Map<number, Buffer>();
-    for (const { file } of entradas) {
-      if (isRemote(file)) {
-        remotos.set(file.id, await readMediaFile(file));
-      }
-    }
-
-    const archive = archiver('zip', { zlib: { level: 9 }, forceLocalTime: true });
-    const passThrough = new PassThrough();
-    archive.pipe(passThrough);
-
-    archive.on('warning', (error) => {
-      strapi.log.warn(`Aviso ao gerar o pacote do artigo ${documentId}: ${error.message}`);
-    });
-    archive.on('error', (error) => {
-      strapi.log.error(`Erro ao gerar o pacote do artigo ${documentId}: ${error.message}`);
-      passThrough.destroy(error);
-    });
-
-    const zipName = `${pacoteZipBasename(artigo.slug, documentId)}.zip`;
-
-    ctx.set('Content-Type', 'application/zip');
-    ctx.set('Content-Disposition', `attachment; filename="${zipName}"`);
-    // O objeto Archiver tem `.pipe()` mas não é `instanceof Stream`; o Koa tentaria
-    // serializá-lo como JSON. O PassThrough é o corpo legível que o Koa escoa.
-    ctx.body = passThrough;
-
-    // Nome curto no pacote — o slug/título do artigo pode passar de 200 caracteres
-    // e estourar MAX_PATH do Windows ao extrair o .zip.
-    archive.append(xmlBuffer, { name: JATS_XML_FILENAME });
-
-    entradas.forEach(({ name, file }) => {
-      const buffer = remotos.get(file.id);
-      if (buffer) {
-        archive.append(buffer, { name });
-      } else {
-        archive.append(createReadStream(publicFilePath(file)), { name });
-      }
-    });
-
-    archive.finalize().catch((error) => {
-      strapi.log.error(`Falha ao finalizar o pacote do artigo ${documentId}: ${error.message}`);
-      passThrough.destroy(error);
-    });
   },
 
   /**
