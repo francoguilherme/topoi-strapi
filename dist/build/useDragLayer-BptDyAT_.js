@@ -1,0 +1,1 @@
+import{U as s,W as c,r as o}from"./strapi-Be_pyn2R.js";function g(t){const e=s().getMonitor(),[a,r]=c(e,t);return o.useEffect(()=>e.subscribeToOffsetChange(r)),o.useEffect(()=>e.subscribeToStateChange(r)),a}export{g as u};
