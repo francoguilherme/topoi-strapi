@@ -1,0 +1,704 @@
+/**
+ * Monta um artigo JATS/SPS a partir dos metadados do CMS e do JSON do conversor.
+ *
+ * Front matter vem do Strapi; abstracts/keywords do CMS têm prioridade e o JSON
+ * só entra quando o campo correspondente está vazio. Corpo, notas, back matter e
+ * referências saem do JSON. Ids do conversor (`reference-13`, `footnote-1`,
+ * `figure-1`, `table-1`) são traduzidos para o padrão SciELO (`B13`, `fn1`, `f1`, `t1`).
+ */
+
+import { create } from 'xmlbuilder2';
+
+type XMLBuilder = ReturnType<typeof create>;
+
+const XLINK_NS = 'http://www.w3.org/1999/xlink';
+const MML_NS = 'http://www.w3.org/1998/Math/MathML';
+
+const JOURNAL = {
+  publisherId: 'topoi',
+  title: 'Topoi (Rio de Janeiro)',
+  abbrev: 'Topoi (Rio J.)',
+  issnPpub: '1518-3319',
+  issnEpub: '2237-101X',
+  publisher: 'Programa de Pós-Graduação em História Social da Universidade Federal do Rio de Janeiro',
+};
+
+const LICENSE_HREF = 'http://creativecommons.org/licenses/by/4.0/';
+const LICENSE_P =
+  'Este é um artigo publicado em acesso aberto (Open Access) sob a licença Creative Commons Attribution, que permite uso, distribuição e reprodução em qualquer meio, sem restrições desde que o trabalho original seja corretamente citado.';
+
+//TODO Dinamizar
+// Este es un artículo publicado en acceso abierto (Open Access) bajo la licencia Creative Commons Attribution, que permite su uso, distribución y reproducción en cualquier medio, sin restricciones siempre que el trabajo original sea debidamente citado.
+// This is an Open Access article distributed under the terms of the Creative Commons Attribution License, which permits unrestricted use, distribution, and reproduction in any medium, provided the original work is properly cited.
+
+const NAME_PARTICLES = new Set([ //TODO Testar isso
+  'da',
+  'de',
+  'do',
+  'dos',
+  'das',
+  'del',
+  'della',
+  'van',
+  'von',
+  'di',
+  "d'",
+]);
+
+const stripAccents = (value: string): string => value.normalize('NFD').replace(/\p{M}/gu, '');
+
+const normalizeNameSuffixToken = (token: string): string =>
+  stripAccents(token).toLowerCase().replace(/\.+$/, '');
+
+const NAME_SUFFIXES = new Set([
+  // Português
+  'filho',
+  'filha',
+  'junior',
+  'jr',
+  'neto',
+  'neta',
+  'bisneto',
+  'bisneta',
+  'sobrinho',
+  'sobrinha',
+  // Inglês
+  'senior',
+  'sr',
+  'son',
+  'ii',
+  'iii',
+  'iv',
+  'v',
+  // Espanhol
+  'hijo',
+  'hija',
+  'nieto',
+  'nieta',
+  'bisnieto',
+  'bisnieta',
+]);
+
+const isNameSuffix = (token: string): boolean => NAME_SUFFIXES.has(normalizeNameSuffixToken(token));
+
+const affLabel = (oneBasedIndex: number): string => '*'.repeat(oneBasedIndex);
+
+const MD_LINK_RE = /\[([^\]]*)\]\(#([A-Za-z]+)-(\d+)\)/g;
+const URL_RE = /(https?:\/\/[^\s<>"'\)\]]+)/g;
+
+export interface ConverterJson {
+  abstracts?: {
+    portuguese?: unknown;
+    english?: unknown;
+    spanish?: unknown;
+  };
+  keywords?: {
+    portuguese?: unknown;
+    english?: unknown;
+    spanish?: unknown;
+  };
+  body?: unknown[];
+  back_matter?: unknown[];
+  footnotes?: Array<{ id?: string; text?: string }>;
+  references?: Array<{ id?: string; text?: string }>;
+  images?: Array<{ name: string; size?: number }>;
+}
+
+export interface ArtigoAutor {
+  nome?: string | null;
+  instituicao?: string | null;
+  departamento?: string | null;
+  orcid?: string | null;
+  email?: string | null;
+}
+
+export interface ArtigoEdicao {
+  volume?: number | null;
+  numero?: number | null;
+  data_de_publicacao?: string | null;
+  titulo?: string | null;
+}
+
+export interface ArtigoForJats {
+  titulo?: string | null;
+  titulo_en?: string | null;
+  titulo_es?: string | null;
+  resumo?: unknown;
+  resumo_en?: unknown;
+  resumo_es?: unknown;
+  palavras_chave?: Array<{ texto?: string | null } | string> | null;
+  autores?: ArtigoAutor[] | null;
+  secao?: string | null;
+  dossie?: boolean | null;
+  pagina_inicial?: number | null;
+  pagina_final?: number | null;
+  data_de_publicacao?: string | null;
+  doi?: string | null;
+  edicao?: ArtigoEdicao | null;
+}
+
+const ARTICLE_TYPE_BY_SECAO: Record<string, string> = {
+  Artigo: 'research-article',
+  Resenha: 'book-review',
+  Entrevista: 'interview',
+  Documento: 'other',
+};
+
+const KWD_TITLES: Record<string, string> = {
+  pt: 'Palavras-chave:',
+  en: 'Keywords:',
+  es: 'Palabras clave:',
+};
+
+const ABSTRACT_TITLES: Record<string, string> = {
+  pt: 'RESUMO',
+  en: 'ABSTRACT',
+  es: 'RESUMEN',
+};
+
+export const buildJatsXml = (artigo: ArtigoForJats, json: ConverterJson): string => {
+  const doc = create({ version: '1.0', encoding: 'UTF-8' }).dtd({
+    pubID: '-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.1 20151215//EN',
+    sysID: 'https://jats.nlm.nih.gov/publishing/1.1/JATS-journalpublishing1.dtd',
+  });
+
+  const article = doc.ele('article', {
+    'xmlns:mml': MML_NS,
+    'xmlns:xlink': XLINK_NS,
+    'article-type': ARTICLE_TYPE_BY_SECAO[artigo.secao || 'Artigo'] || 'research-article',
+    'dtd-version': '1.1',
+    'specific-use': 'sps-1.9',
+    'xml:lang': 'pt', //TODO Dinamizar
+  });
+
+  const front = article.ele('front');
+  appendJournalMeta(front);
+  appendArticleMeta(front.ele('article-meta'), artigo, json);
+
+  const body = article.ele('body');
+  appendBlocks(body, json.body ?? []);
+
+  const back = article.ele('back');
+  appendFootnotes(back, json.footnotes ?? []);
+  //TODO Adicionar acknowledgements <ack> ?
+  appendBlocks(back, json.back_matter ?? []); //TODO Testar isso
+  appendReferences(back, json.references ?? []);
+
+  return doc.end({ prettyPrint: true, indent: '  ' });
+};
+
+const appendJournalMeta = (front: XMLBuilder) => {
+  const journal = front.ele('journal-meta');
+  journal.ele('journal-id', { 'journal-id-type': 'publisher-id' }).txt(JOURNAL.publisherId);
+  const titles = journal.ele('journal-title-group');
+  titles.ele('journal-title').txt(JOURNAL.title);
+  titles.ele('abbrev-journal-title', { 'abbrev-type': 'publisher' }).txt(JOURNAL.abbrev);
+  journal.ele('issn', { 'pub-type': 'ppub' }).txt(JOURNAL.issnPpub);
+  journal.ele('issn', { 'pub-type': 'epub' }).txt(JOURNAL.issnEpub);
+  journal.ele('publisher').ele('publisher-name').txt(JOURNAL.publisher);
+};
+
+const appendArticleMeta = (meta: XMLBuilder, artigo: ArtigoForJats, json: ConverterJson) => {
+  const doi = (artigo.doi || '').trim();
+  if (doi) {
+    meta.ele('article-id', { 'pub-id-type': 'doi' }).txt(doi.replace(/^https?:\/\/doi\.org\//i, ''));
+  }
+
+  //TODO Dinamizar com língua, pegando titulo_en ou titulo_es, e Original Article por exemplo
+  const subject = artigo.dossie
+    ? (artigo.edicao?.titulo || '').trim()
+    : artigo.secao === 'Artigo'
+      ? 'Artigo original'
+      : artigo.secao || 'Artigo original';
+  meta
+    .ele('article-categories')
+    .ele('subj-group', { 'subj-group-type': 'heading' })
+    .ele('subject')
+    .txt(subject);
+
+  const titleGroup = meta.ele('title-group');
+  titleGroup.ele('article-title').txt((artigo.titulo || '').trim());
+  if ((artigo.titulo_en || '').trim()) {
+    titleGroup.ele('trans-title-group', { 'xml:lang': 'en' }).ele('trans-title').txt(artigo.titulo_en!.trim());
+  }
+  if ((artigo.titulo_es || '').trim()) {
+    titleGroup.ele('trans-title-group', { 'xml:lang': 'es' }).ele('trans-title').txt(artigo.titulo_es!.trim());
+  }
+
+  appendContribs(meta, artigo.autores ?? []);
+  //TODO Adicionar author-notes?
+  appendPubDates(meta, artigo);
+  appendPages(meta, artigo);
+
+  const permissions = meta.ele('permissions');
+  permissions
+    .ele('license', {
+      'xmlns:xlink': XLINK_NS,
+      'license-type': 'open-access',
+      'xlink:href': LICENSE_HREF,
+      'xml:lang': 'pt', //TODO Dinamizar
+    })
+    .ele('license-p')
+    .txt(LICENSE_P);
+
+  appendAbstractsAndKeywords(meta, artigo, json);
+};
+
+const appendContribs = (meta: XMLBuilder, autores: ArtigoAutor[]) => {
+  if (autores.length === 0) {
+    return;
+  }
+
+  const group = meta.ele('contrib-group');
+  autores.forEach((autor, index) => {
+    const affId = `aff${index + 1}`;
+    const label = affLabel(index + 1);
+    const contrib = group.ele('contrib', { 'contrib-type': 'author' });
+    const orcid = normalizeOrcid(autor.orcid);
+    if (orcid) {
+      contrib.ele('contrib-id', { 'contrib-id-type': 'orcid' }).txt(orcid);
+    }
+    //TODO Testar essa divisão
+    const { given, surname, suffix } = splitPersonName(autor.nome || '');
+    const name = contrib.ele('name');
+    name.ele('surname').txt(surname);
+    if (given) {
+      name.ele('given-names').txt(given);
+    }
+    if (suffix) {
+      name.ele('suffix').txt(suffix);
+    }
+    contrib.ele('xref', { 'ref-type': 'aff', rid: affId }).txt(label);
+
+    const aff = meta.ele('aff', { id: affId });
+    aff.ele('label').txt(label);
+    //TODO Testar isso
+    const parts = [autor.instituicao, autor.departamento].map((value) => (value || '').trim()).filter(Boolean);
+    if (autor.instituicao) {
+      aff.ele('institution', { 'content-type': 'orgname' }).txt(autor.instituicao.trim());
+    }
+    if (autor.departamento) {
+      aff.ele('institution', { 'content-type': 'orgdiv1' }).txt(autor.departamento.trim());
+    }
+    if (autor.email) {
+      aff.ele('email').txt(autor.email.trim());
+    }
+    if (parts.length > 0) {
+      aff.ele('institution', { 'content-type': 'original' }).txt(parts.join(' / '));
+    }
+  });
+};
+
+const appendPubDates = (meta: XMLBuilder, artigo: ArtigoForJats) => {
+  const raw = artigo.data_de_publicacao || artigo.edicao?.data_de_publicacao;
+  const parsed = parseIsoDate(raw);
+  if (parsed) {
+    const pub = meta.ele('pub-date', { 'date-type': 'pub', 'publication-format': 'electronic' });
+    appendDateParts(pub, parsed);
+    meta.ele('pub-date', { 'date-type': 'collection', 'publication-format': 'electronic' }).ele('year').txt(parsed.year);
+  }
+  if (artigo.edicao?.volume != null) {
+    meta.ele('volume').txt(String(artigo.edicao.volume));
+  }
+  if (artigo.edicao?.numero != null) {
+    meta.ele('issue').txt(String(artigo.edicao.numero));
+  }
+};
+
+const appendPages = (meta: XMLBuilder, artigo: ArtigoForJats) => {
+  if (artigo.pagina_inicial != null) {
+    meta.ele('fpage').txt(String(artigo.pagina_inicial));
+  }
+  if (artigo.pagina_final != null) {
+    meta.ele('lpage').txt(String(artigo.pagina_final));
+  }
+};
+
+const appendAbstractsAndKeywords = (meta: XMLBuilder, artigo: ArtigoForJats, json: ConverterJson) => {
+  const ptAbstract = firstNonEmpty(flattenBlocks(artigo.resumo), asPlain(json.abstracts?.portuguese));
+  const enAbstract = firstNonEmpty(flattenBlocks(artigo.resumo_en), asPlain(json.abstracts?.english));
+  const esAbstract = firstNonEmpty(flattenBlocks(artigo.resumo_es), asPlain(json.abstracts?.spanish));
+
+  const ptKeywords = firstKeywordList(keywordsFromCms(artigo.palavras_chave), asKeywordList(json.keywords?.portuguese));
+  const enKeywords = asKeywordList(json.keywords?.english);
+  const esKeywords = asKeywordList(json.keywords?.spanish);
+
+  appendAbstract(meta, 'abstract', 'pt', ptAbstract);
+  appendAbstract(meta, 'trans-abstract', 'en', enAbstract);
+  appendAbstract(meta, 'trans-abstract', 'es', esAbstract);
+
+  appendKwdGroup(meta, 'pt', ptKeywords);
+  appendKwdGroup(meta, 'en', enKeywords);
+  appendKwdGroup(meta, 'es', esKeywords);
+
+  //TODO Adicionar funding-group?
+};
+
+const appendAbstract = (meta: XMLBuilder, tag: 'abstract' | 'trans-abstract', lang: string, text: string) => {
+  if (!text) {
+    return;
+  }
+  const el = tag === 'abstract' ? meta.ele(tag) : meta.ele(tag, { 'xml:lang': lang });
+  el.ele('title').txt(ABSTRACT_TITLES[lang] || 'RESUMO');
+  const p = el.ele('p');
+  appendMixed(p, text);
+};
+
+const appendKwdGroup = (meta: XMLBuilder, lang: string, keywords: string[]) => {
+  if (keywords.length === 0) {
+    return;
+  }
+  const group = meta.ele('kwd-group', { 'xml:lang': lang });
+  group.ele('title').txt(KWD_TITLES[lang] || 'Palavras-chave:');
+  keywords.forEach((keyword) => group.ele('kwd').txt(keyword));
+};
+
+const appendBlocks = (parent: XMLBuilder, items: unknown[]) => {
+  items.forEach((item) => appendBlock(parent, item));
+};
+
+const appendBlock = (parent: XMLBuilder, item: unknown) => {
+  if (typeof item === 'string') {
+    const text = item.trim();
+    if (!text) {
+      return;
+    }
+    const p = parent.ele('p');
+    appendMixed(p, text);
+    return;
+  }
+
+  if (!item || typeof item !== 'object') {
+    return;
+  }
+
+  const obj = item as Record<string, unknown>;
+
+  if (obj.type === 'figure') {
+    appendFigure(parent, obj);
+    return;
+  }
+  if (obj.type === 'table') {
+    appendTable(parent, obj);
+    return;
+  }
+  if (obj.type === 'quote') {
+    const quote = parent.ele('disp-quote').ele('p');
+    appendMixed(quote, asPlain(obj.text));
+    return;
+  }
+  if (obj.type === 'verse-group' && Array.isArray(obj.lines)) {
+    const group = parent.ele('verse-group');
+    obj.lines.forEach((line) => {
+      const verseLine = group.ele('verse-line');
+      appendMixed(verseLine, asPlain(line));
+    });
+    return;
+  }
+  if (typeof obj.title === 'string' && Array.isArray(obj.paragraphs)) {
+    const sec = parent.ele('sec');
+    const title = sec.ele('title');
+    appendMixed(title, obj.title);
+    appendBlocks(sec, obj.paragraphs);
+    return;
+  }
+  if (typeof obj.text === 'string') {
+    const p = parent.ele('p');
+    appendMixed(p, obj.text);
+  }
+};
+
+const appendFigure = (parent: XMLBuilder, obj: Record<string, unknown>) => {
+  const p = parent.ele('p');
+  const fig = p.ele('fig', { id: toSpsId('figure', String(obj.id || '')) });
+  if (asPlain(obj.label)) {
+    fig.ele('label').txt(asPlain(obj.label));
+  }
+  if (asPlain(obj.caption)) {
+    const caption = fig.ele('caption').ele('title');
+    appendMixed(caption, asPlain(obj.caption));
+  }
+  const href = graphicBasename(asPlain(obj.graphic));
+  if (href) {
+    fig.ele('graphic', { 'xmlns:xlink': XLINK_NS, 'xlink:href': href });
+  }
+  if (asPlain(obj.attrib)) {
+    const attrib = fig.ele('attrib');
+    appendMixed(attrib, asPlain(obj.attrib));
+  }
+};
+
+const appendTable = (parent: XMLBuilder, obj: Record<string, unknown>) => {
+  const wrap = parent.ele('table-wrap', { id: toSpsId('table', String(obj.id || '')) });
+  if (asPlain(obj.label)) {
+    wrap.ele('label').txt(asPlain(obj.label));
+  }
+  if (asPlain(obj.caption)) {
+    const caption = wrap.ele('caption').ele('title');
+    appendMixed(caption, asPlain(obj.caption));
+  }
+
+  const tableData = (obj.table || {}) as {
+    thead?: unknown[];
+    tbody?: unknown[];
+  };
+  const table = wrap.ele('table');
+  appendTableSection(table, 'thead', tableData.thead);
+  appendTableSection(table, 'tbody', tableData.tbody);
+
+  if (asPlain(obj.attrib)) {
+    const attrib = wrap.ele('table-wrap-foot').ele('attrib');
+    appendMixed(attrib, asPlain(obj.attrib));
+  }
+};
+
+const appendTableSection = (table: XMLBuilder, tag: 'thead' | 'tbody', rows: unknown[] | undefined) => {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return;
+  }
+  const section = table.ele(tag);
+  rows.forEach((row) => {
+    const cells = (row as { tr?: unknown[] })?.tr;
+    if (!Array.isArray(cells)) {
+      return;
+    }
+    const tr = section.ele('tr');
+    cells.forEach((cell) => {
+      const data = (cell || {}) as { tag?: string; text?: unknown; rowspan?: number; colspan?: number };
+      const cellTag = data.tag === 'th' ? 'th' : 'td';
+      const attrs: Record<string, string> = {};
+      if (data.rowspan && data.rowspan > 1) {
+        attrs.rowspan = String(data.rowspan);
+      }
+      if (data.colspan && data.colspan > 1) {
+        attrs.colspan = String(data.colspan);
+      }
+      const el = tr.ele(cellTag, attrs);
+      appendMixed(el, asPlain(data.text));
+    });
+  });
+};
+
+const appendFootnotes = (back: XMLBuilder, footnotes: Array<{ id?: string; text?: string }>) => {
+  if (footnotes.length === 0) {
+    return;
+  }
+  const group = back.ele('fn-group');
+  footnotes.forEach((fn, index) => {
+    const spsId = toSpsId('footnote', fn.id || String(index + 1));
+    const label = spsId.replace(/^fn/i, '') || String(index + 1);
+    const node = group.ele('fn', { 'fn-type': 'other', id: spsId });
+    node.ele('label').txt(label);
+    const p = node.ele('p');
+    appendMixed(p, asPlain(fn.text)); //TODO Testar se <italic> e link funcionam
+  });
+};
+
+const appendReferences = (back: XMLBuilder, references: Array<{ id?: string; text?: string }>) => {
+  if (references.length === 0) {
+    return;
+  }
+  const list = back.ele('ref-list');
+  list.ele('title').txt('Referências'); //TODO Dinamizar
+  references.forEach((ref, index) => {
+    const node = list.ele('ref', { id: toSpsId('reference', ref.id || String(index + 1)) });
+    const mixed = node.ele('mixed-citation');
+    appendMixed(mixed, asPlain(ref.text)); //TODO Testar se <italic> funciona?
+  });
+};
+
+export const appendMixed = (parent: XMLBuilder, text: string) => {
+  if (!text) {
+    return;
+  }
+  MD_LINK_RE.lastIndex = 0;
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = MD_LINK_RE.exec(text))) {
+    if (match.index > last) {
+      appendTextWithUrls(parent, text.slice(last, match.index));
+    }
+    const [, label, kind, num] = match;
+    const mapped = mapMarkdownTarget(kind, num);
+    const xref = parent.ele('xref', { 'ref-type': mapped.refType, rid: mapped.rid });
+    if (mapped.refType === 'fn') {
+      xref.ele('sup').txt(label);
+    } else {
+      xref.txt(label);
+    }
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) {
+    appendTextWithUrls(parent, text.slice(last));
+  }
+};
+
+const appendTextWithUrls = (parent: XMLBuilder, text: string) => {
+  if (!text) {
+    return;
+  }
+  URL_RE.lastIndex = 0;
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = URL_RE.exec(text))) {
+    if (match.index > last) {
+      parent.txt(text.slice(last, match.index));
+    }
+    const href = match[1];
+    parent.ele('ext-link', { 'ext-link-type': 'uri', 'xmlns:xlink': XLINK_NS, 'xlink:href': href }).txt(href);
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) {
+    parent.txt(text.slice(last));
+  }
+};
+
+export const mapMarkdownTarget = (kind: string, num: string): { refType: string; rid: string } => {
+  switch (kind.toLowerCase()) {
+    case 'reference':
+      return { refType: 'bibr', rid: `B${num}` };
+    case 'footnote':
+      return { refType: 'fn', rid: `fn${num}` };
+    case 'figure':
+      return { refType: 'fig', rid: `f${num}` };
+    case 'table':
+      return { refType: 'table', rid: `t${num}` };
+    default:
+      return { refType: 'bibr', rid: `${kind}-${num}` };
+  }
+};
+
+export const toSpsId = (kind: 'reference' | 'footnote' | 'figure' | 'table', raw: string): string => {
+  const match = String(raw).match(/(\d+)\s*$/);
+  const num = match ? match[1] : raw.replace(/^[^\d]+/, '') || '1';
+  switch (kind) {
+    case 'reference':
+      return `B${num}`;
+    case 'footnote':
+      return `fn${num}`;
+    case 'figure':
+      return `f${num}`;
+    case 'table':
+      return `t${num}`;
+    default:
+      return raw;
+  }
+};
+
+export const graphicBasename = (graphic: string): string => graphic.replace(/\\/g, '/').split('/').filter(Boolean).pop() || '';
+
+export const splitPersonName = (full: string): { given: string; surname: string; suffix?: string } => {
+  const parts = full.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    return { given: '', surname: '' };
+  }
+
+  let suffix: string | undefined;
+  if (parts.length > 1 && isNameSuffix(parts[parts.length - 1])) {
+    suffix = parts.pop()!;
+  }
+
+  if (parts.length === 0) {
+    return { given: '', surname: suffix || '' };
+  }
+  if (parts.length === 1) {
+    return { given: '', surname: parts[0], ...(suffix ? { suffix } : {}) };
+  }
+
+  let index = parts.length - 1;
+  while (index > 1 && NAME_PARTICLES.has(parts[index - 1].toLowerCase())) {
+    index -= 1;
+  }
+  return {
+    given: parts.slice(0, index).join(' '),
+    surname: parts.slice(index).join(' '),
+    ...(suffix ? { suffix } : {}),
+  };
+};
+
+export const flattenBlocks = (value: unknown): string => {
+  if (!value) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+  if (Array.isArray(value)) {
+    return value.map(flattenBlocks).filter(Boolean).join('\n').trim();
+  }
+  if (typeof value === 'object') {
+    const node = value as { text?: unknown; children?: unknown };
+    if (typeof node.text === 'string') {
+      return node.text;
+    }
+    if (node.children) {
+      return flattenBlocks(node.children);
+    }
+  }
+  return '';
+};
+
+const asPlain = (value: unknown): string => {
+  if (value == null) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+  if (Array.isArray(value)) {
+    return value.map(asPlain).filter(Boolean).join('\n').trim();
+  }
+  return String(value).trim();
+};
+
+const asKeywordList = (value: unknown): string[] => {
+  if (!value) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value.map(asPlain).filter(Boolean);
+  }
+  return asPlain(value)
+    .split(/[;,\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+};
+
+const keywordsFromCms = (value: ArtigoForJats['palavras_chave']): string[] => {
+  if (!value) {
+    return [];
+  }
+  return value
+    .map((item) => (typeof item === 'string' ? item : item?.texto || ''))
+    .map((item) => item.trim())
+    .filter(Boolean);
+};
+
+const firstNonEmpty = (...values: string[]): string => values.find((value) => Boolean(value.trim())) || '';
+
+const firstKeywordList = (...lists: string[][]): string[] => lists.find((list) => list.length > 0) || [];
+
+const normalizeOrcid = (raw?: string | null): string | null => {
+  if (!raw) {
+    return null;
+  }
+  const match = raw.match(/(\d{4}-\d{4}-\d{4}-\d{3}[\dX])/i);
+  return match ? match[1].toUpperCase() : null;
+};
+
+const parseIsoDate = (raw?: string | null): { year: string; month: string; day: string } | null => {
+  if (!raw) {
+    return null;
+  }
+  const match = String(raw).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) {
+    return null;
+  }
+  return { year: match[1], month: match[2], day: match[3] };
+};
+
+const appendDateParts = (parent: XMLBuilder, date: { year: string; month: string; day: string }) => {
+  parent.ele('day').txt(date.day);
+  parent.ele('month').txt(date.month);
+  parent.ele('year').txt(date.year);
+};

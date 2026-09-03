@@ -37,7 +37,7 @@ export interface SimplesTexto extends Struct.ComponentSchema {
 }
 
 declare module '@strapi/strapi' {
-  export module Public {
+  export namespace Public {
     export interface ComponentSchemas {
       'simples.editorial': SimplesEditorial;
       'simples.pagina': SimplesPagina;

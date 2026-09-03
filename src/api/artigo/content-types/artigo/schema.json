@@ -43,6 +43,20 @@
         "files"
       ]
     },
+    "xml": {
+      "type": "media",
+      "multiple": false,
+      "allowedTypes": [
+        "files"
+      ]
+    },
+    "imagens": {
+      "type": "media",
+      "multiple": true,
+      "allowedTypes": [
+        "images"
+      ]
+    },
     "palavras_chave": {
       "type": "component",
       "component": "simples.texto",
