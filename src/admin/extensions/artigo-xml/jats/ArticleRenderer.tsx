@@ -275,14 +275,22 @@ const Article: React.FC<{ doc: Document }> = ({ doc }) => {
           {editedByFn && (
             <>
               <br />
-              {textOf(directChild(editedByFn, 'label')) || 'Editores responsáveis:'}{' '}
-              {textOf(directChild(editedByFn, 'p'))}
+              {formatEditedBy(editedByFn)}
             </>
           )}
         </MetaFooter>
       )}
     </ArticleContainer>
   );
+};
+
+const formatEditedBy = (fn: Element): string => {
+  const label = textOf(directChild(fn, 'label'));
+  const p = textOf(directChild(fn, 'p'));
+  if (label) {
+    return p ? `${label} ${p}` : label;
+  }
+  return p || 'Editores responsáveis:';
 };
 
 const formatJatsDate = (dateEl: Element): string => {
