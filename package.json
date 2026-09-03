@@ -16,9 +16,9 @@
   },
   "dependencies": {
     "@codemirror/lang-xml": "^6.1.0",
-    "@strapi/plugin-cloud": "5.51.1",
-    "@strapi/plugin-users-permissions": "5.51.1",
-    "@strapi/strapi": "5.51.1",
+    "@strapi/plugin-cloud": "5.52.3",
+    "@strapi/plugin-users-permissions": "5.52.3",
+    "@strapi/strapi": "5.52.3",
     "@uiw/react-codemirror": "4.22.2",
     "archiver": "^7",
     "better-sqlite3": "11.3.0",
