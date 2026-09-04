@@ -286,11 +286,14 @@ const Article: React.FC<{ doc: Document }> = ({ doc }) => {
 
 const formatEditedBy = (fn: Element): string => {
   const label = textOf(directChild(fn, 'label'));
-  const p = textOf(directChild(fn, 'p'));
+  const paragraphs = directChildren(fn, 'p')
+    .map((p) => textOf(p))
+    .filter(Boolean);
+  const body = paragraphs.join(' ');
   if (label) {
-    return p ? `${label} ${p}` : label;
+    return body ? `${label} ${body}` : label;
   }
-  return p || 'Editores responsáveis:';
+  return body || 'Editores responsáveis:';
 };
 
 const formatJatsDate = (dateEl: Element): string => {
