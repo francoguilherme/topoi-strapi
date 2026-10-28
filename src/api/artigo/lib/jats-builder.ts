@@ -86,6 +86,19 @@ const affLabel = (oneBasedIndex: number): string => '*'.repeat(oneBasedIndex);
 const MD_LINK_RE = /\[([^\]]*)\]\(#([A-Za-z]+)-(\d+)\)/g;
 const URL_RE = /(https?:\/\/[^\s<>"'\)\]]+)/g;
 
+/** Sentence punctuation after a URL in plain text (e.g. ".../189619. Acesso em:") must stay outside <ext-link>. */
+export const trimTrailingUrlPunctuation = (raw: string): { href: string; trailing: string } => {
+  let href = raw;
+  while (href.length > 0) {
+    const next = href.replace(/[.,;:!?)]+$/, '');
+    if (next === href) {
+      break;
+    }
+    href = next;
+  }
+  return { href, trailing: raw.slice(href.length) };
+};
+
 export interface ConverterJson {
   abstracts?: {
     portuguese?: unknown;
@@ -546,8 +559,11 @@ const appendTextWithUrls = (parent: XMLBuilder, text: string) => {
     if (match.index > last) {
       parent.txt(text.slice(last, match.index));
     }
-    const href = match[1];
+    const { href, trailing } = trimTrailingUrlPunctuation(match[1]);
     parent.ele('ext-link', { 'ext-link-type': 'uri', 'xmlns:xlink': XLINK_NS, 'xlink:href': href }).txt(href);
+    if (trailing) {
+      parent.txt(trailing);
+    }
     last = match.index + match[0].length;
   }
   if (last < text.length) {
