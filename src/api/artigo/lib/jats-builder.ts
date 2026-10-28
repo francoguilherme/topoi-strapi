@@ -184,7 +184,9 @@ export const buildJatsXml = (artigo: ArtigoForJats, json: ConverterJson): string
   appendBlocks(back, json.back_matter ?? []); //TODO Testar isso
   appendReferences(back, json.references ?? []);
 
-  return doc.end({ prettyPrint: true, indent: '  ' });
+  // prettyPrint quebra nós de texto e <xref> em linhas separadas; ao reparsear vira
+  // "( <xref>Autor</xref> )". Mantemos o XML compacto dentro de <p> e blocos inline.
+  return doc.end({ prettyPrint: false });
 };
 
 const appendJournalMeta = (front: XMLBuilder) => {

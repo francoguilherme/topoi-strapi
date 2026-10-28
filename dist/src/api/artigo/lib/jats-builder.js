@@ -112,7 +112,7 @@ const buildJatsXml = (artigo, json) => {
     //TODO Adicionar acknowledgements <ack> ?
     appendBlocks(back, (_c = json.back_matter) !== null && _c !== void 0 ? _c : []); //TODO Testar isso
     appendReferences(back, (_d = json.references) !== null && _d !== void 0 ? _d : []);
-    return doc.end({ prettyPrint: true, indent: '  ' });
+    return doc.end({ prettyPrint: false });
 };
 exports.buildJatsXml = buildJatsXml;
 const appendJournalMeta = (front) => {

@@ -111,6 +111,39 @@ const normalizeWhitespace = (node: Node, preserveWhitespace: boolean): void => {
   }
 };
 
+/**
+ * Removes whitespace text nodes introduced by pretty-printed XML between "(" and
+ * <xref>, or between </xref> and ")" / punctuation (common after xmlbuilder2).
+ */
+const trimWhitespaceAdjacentToXrefs = (doc: Document): void => {
+  Array.from(doc.getElementsByTagName('xref')).forEach((xref) => {
+    const prev = xref.previousSibling;
+    if (prev?.nodeType === Node.TEXT_NODE && prev.textContent) {
+      let text = prev.textContent;
+      text = text.replace(/\(\s+$/, '(');
+      text = text.replace(/\)\s+$/, ')');
+      if (xref.getAttribute('ref-type') === 'fn') {
+        text = text.replace(/\)\)\s+$/, '))');
+      }
+      prev.textContent = text;
+      if (!prev.textContent) {
+        prev.parentNode?.removeChild(prev);
+      }
+    }
+
+    const next = xref.nextSibling;
+    if (next?.nodeType === Node.TEXT_NODE && next.textContent) {
+      let text = next.textContent;
+      text = text.replace(/^\s+\)/, ')');
+      text = text.replace(/^\s+(?=[,.;:?!])/, '');
+      next.textContent = text;
+      if (!next.textContent) {
+        next.parentNode?.removeChild(next);
+      }
+    }
+  });
+};
+
 /** Wraps `<xref ref-type="fn">` content in `<sup>` when not already present. */
 const wrapFnXrefsWithSup = (doc: Document): void => {
   Array.from(doc.getElementsByTagName('xref')).forEach((xref) => {
@@ -186,6 +219,7 @@ export const normalizeJatsXml = (raw: string): string => {
 
   wrapFnXrefsWithSup(doc);
   normalizeWhitespace(doc.documentElement, false);
+  trimWhitespaceAdjacentToXrefs(doc);
 
   const body = prettyPrintElement(doc.documentElement, 0);
   const trimmedHeader = header.replace(/\s+$/, '');
