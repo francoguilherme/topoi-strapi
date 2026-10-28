@@ -8,7 +8,7 @@
  * `figure-1`, `table-1`) são traduzidos para o padrão SciELO (`B13`, `fn1`, `f1`, `t1`).
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.flattenBlocks = exports.splitPersonName = exports.graphicBasename = exports.toSpsId = exports.mapMarkdownTarget = exports.appendMixed = exports.buildJatsXml = void 0;
+exports.flattenBlocks = exports.splitPersonName = exports.graphicBasename = exports.toSpsId = exports.mapMarkdownTarget = exports.appendMixed = exports.buildJatsXml = exports.trimTrailingUrlPunctuation = void 0;
 const xmlbuilder2_1 = require("xmlbuilder2");
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 const MML_NS = 'http://www.w3.org/1998/Math/MathML';
@@ -72,6 +72,19 @@ const isNameSuffix = (token) => NAME_SUFFIXES.has(normalizeNameSuffixToken(token
 const affLabel = (oneBasedIndex) => '*'.repeat(oneBasedIndex);
 const MD_LINK_RE = /\[([^\]]*)\]\(#([A-Za-z]+)-(\d+)\)/g;
 const URL_RE = /(https?:\/\/[^\s<>"'\)\]]+)/g;
+/** Sentence punctuation after a URL in plain text (e.g. ".../189619. Acesso em:") must stay outside <ext-link>. */
+const trimTrailingUrlPunctuation = (raw) => {
+    let href = raw;
+    while (href.length > 0) {
+        const next = href.replace(/[.,;:!?)]+$/, '');
+        if (next === href) {
+            break;
+        }
+        href = next;
+    }
+    return { href, trailing: raw.slice(href.length) };
+};
+exports.trimTrailingUrlPunctuation = trimTrailingUrlPunctuation;
 const ARTICLE_TYPE_BY_SECAO = {
     Artigo: 'research-article',
     Resenha: 'book-review',
@@ -444,8 +457,11 @@ const appendTextWithUrls = (parent, text) => {
         if (match.index > last) {
             parent.txt(text.slice(last, match.index));
         }
-        const href = match[1];
+        const { href, trailing } = (0, exports.trimTrailingUrlPunctuation)(match[1]);
         parent.ele('ext-link', { 'ext-link-type': 'uri', 'xmlns:xlink': XLINK_NS, 'xlink:href': href }).txt(href);
+        if (trailing) {
+            parent.txt(trailing);
+        }
         last = match.index + match[0].length;
     }
     if (last < text.length) {
